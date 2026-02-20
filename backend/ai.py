@@ -46,6 +46,9 @@ class RLAgent:
         self.lr = 0.1
         self.gamma = 0.95
         self.epsilon = 0.3  # Exploration rate
+        # Path cache: reuse A* result while following the same target
+        self._path_cache: list = []
+        self._path_target = None
 
     def get_state_index(self, pos, battery, step, current_mins):
         # 1. Distance to nearest objective
@@ -63,12 +66,8 @@ class RLAgent:
 
         return (d_bin, b_bin, is_day)
 
-    def path_step(self, start, target, speed):
-        """Uses A* to find the next physical coordinate based on speed."""
-        if start == target:
-            return start, 0
-
-        # Simple A* for 8-way movement
+    def _compute_path(self, start, target):
+        """A* returning the full path from start to target (start excluded, target included)."""
         queue = [(0, start)]
         came_from = {start: None}
         cost = {start: 0}
@@ -79,14 +78,9 @@ class RLAgent:
                 break
 
             for dr, dc in [
-                (-1, -1),
-                (-1, 0),
-                (-1, 1),
-                (0, -1),
-                (0, 1),
-                (1, -1),
-                (1, 0),
-                (1, 1),
+                (-1, -1), (-1, 0), (-1, 1),
+                (0, -1),           (0,  1),
+                (1, -1),  (1,  0), (1,  1),
             ]:
                 nxt = (curr[0] + dr, curr[1] + dc)
                 if (
@@ -103,28 +97,46 @@ class RLAgent:
                         heapq.heappush(queue, (priority, nxt))
                         came_from[nxt] = curr
 
-        # Reconstruct path and pick the node at 'speed' distance
         path = []
         temp = target
         while temp in came_from and temp != start:
             path.append(temp)
             temp = came_from[temp]
         path.reverse()
+        return path
 
-        actual_move = min(len(path), speed)
-        new_pos = path[actual_move - 1] if path else start
+    def path_step(self, start, target, speed):
+        """Move along a cached A* path by up to `speed` steps, recomputing only when the target changes."""
+        if start == target:
+            return start, 0
+
+        # Only recompute when the destination has changed or the cache is exhausted
+        if target != self._path_target or not self._path_cache:
+            self._path_cache = self._compute_path(start, target)
+            self._path_target = target
+
+        if not self._path_cache:
+            return start, 0
+
+        actual_move = min(len(self._path_cache), speed)
+        new_pos = self._path_cache[actual_move - 1]
+        self._path_cache = self._path_cache[actual_move:]  # consume used steps
         return new_pos, actual_move
 
-    def train(self, episodes=1000, hours=24):
-        total_steps = hours * 2
+    # Safety cap: large enough to complete any map, prevents infinite loops during training
+    MAX_TRAIN_STEPS = 10_000
 
+    def train(self, episodes=1000):
         for ep in range(episodes):
             pos = self.m.start_pos
             battery = 100.0
             mins = set(self.m.minerals.keys())
             step = 0
+            # Reset path cache so stale paths from previous episodes / maps are discarded
+            self._path_cache = []
+            self._path_target = None
 
-            while step < total_steps:
+            while step < self.MAX_TRAIN_STEPS:
                 s_idx = self.get_state_index(pos, battery, step, mins)
 
                 # Epsilon-greedy action selection
@@ -144,7 +156,9 @@ class RLAgent:
                 speed_choice = (action % 3) + 1
 
                 # Execute physical movement
+                old_dist = max(abs(pos[0] - target[0]), abs(pos[1] - target[1]))
                 new_pos, dist_moved = self.path_step(pos, target, speed_choice)
+                new_dist = max(abs(new_pos[0] - target[0]), abs(new_pos[1] - target[1]))
 
                 # Energy Calculation
                 # Consumption: E = k * v^2 (v is blocks moved in 0.5h)
@@ -155,7 +169,8 @@ class RLAgent:
 
                 battery = min(100, battery - consumption + charge)
 
-                reward = -0.5  # Small penalty to encourage speed
+                # Step penalty + shaped reward for making progress toward target
+                reward = -0.5 + 0.2 * (old_dist - new_dist)
 
                 # Mining Check
                 if new_pos in mins:
@@ -167,17 +182,23 @@ class RLAgent:
                     mins.remove(new_pos)
                     reward += 100  # Huge reward for collecting
 
-                # Failure condition
+                # Failure condition — update Q-table before terminating
                 if battery <= 0:
                     reward -= 500
+                    self.q_table[s_idx][action] += self.lr * (
+                        reward - self.q_table[s_idx][action]
+                    )
                     break
 
-                # Returning home success
+                # Returning home success — update Q-table before terminating
                 if not mins and new_pos == self.m.start_pos:
                     reward += 200
+                    self.q_table[s_idx][action] += self.lr * (
+                        reward - self.q_table[s_idx][action]
+                    )
                     break
 
-                # Update Q-Table
+                # Update Q-Table (non-terminal)
                 step += 1
                 new_s_idx = self.get_state_index(new_pos, battery, step, mins)
                 best_future_q = np.max(self.q_table[new_s_idx])
@@ -195,12 +216,11 @@ def train_and_save(
     map_file="mars_map_50x50.csv",
     q_table_file="q_table",
     episodes=10000,
-    hours=24,
 ):
     mission = MarsMission(map_file)
     agent = RLAgent(mission)
     print("Starting RL training against the CSV map layout...")
-    agent.train(episodes=episodes, hours=hours)
+    agent.train(episodes=episodes)
     print("Training finished.")
     agent.q_table.dump(q_table_file)
     print(f"Saved q-table to {q_table_file}")
