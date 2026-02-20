@@ -21,16 +21,16 @@ interface SceneProps {
 const ROVER_HEIGHT_OFFSET = 0;  // Rover magassága a terep fölött (csökkentsd ha lejjebb akarod)
 const ROVER_SCALE = 0.7;           // Rover mérete (nagyobb szám = nagyobb rover)
 
-const OBSTACLE_HEIGHT_OFFSET = 0; // Kövek magassága a terep fölött
-const OBSTACLE_SCALE = 5.0;       // Kövek mérete (nagyobb szám = nagyobb kövek)
+const OBSTACLE_HEIGHT_OFFSET = -0.2; // Kövek magassága a terep fölött
+const OBSTACLE_SCALE = 4.5;       // Kövek mérete (nagyobb szám = nagyobb kövek)
 const OBSTACLE_RANDOM_OFFSET = 0.5; // Kövek random eltolása (0 = nincs random, 1 = teljes cella)
 
-const MINERAL_HEIGHT_OFFSET = 0.15; // Kristályok magassága a terep fölött
-const MINERAL_SCALE = 0.20;         // Kristályok mérete
+const MINERAL_HEIGHT_OFFSET = -0.2; // Kristályok magassága a terep fölött
+const MINERAL_SCALE = 0.15;         // Kristályok mérete
 const MINERAL_RANDOM_OFFSET = 1.2;  // Kristályok random eltolása
 
-const GOLD_HEIGHT_OFFSET = 0.3; // Aranyérc magassága a terep fölött
-const GOLD_SCALE = 4;         // Aranyérc mérete (nagyobb szám = nagyobb arany)
+const GOLD_HEIGHT_OFFSET = -0.2; // Aranyérc magassága a terep fölött
+const GOLD_SCALE = 5;         // Aranyérc mérete (nagyobb szám = nagyobb arany)
 
 const RENDER_DISTANCE = 1500;    // Látótávolság (nagyobb = messzebbre látsz)
 // ====================================================================
@@ -68,35 +68,6 @@ const getRandomRotation = (x: number, y: number): number => {
   return rand * Math.PI * 2; // Random rotation between 0 and 2π
 };
 
-// Deterministic pseudo-random noise function for terrain
-const terrainNoise = (x: number, z: number) => {
-  // Base rolling hills
-  let y = Math.sin(x * 0.05) * Math.cos(z * 0.05) * 2;
-  // Mid-frequency noise
-  y += Math.sin(x * 0.1 + 1.5) * Math.cos(z * 0.1 + 0.8) * 1.5;
-  // High-frequency details
-  y += Math.sin(x * 0.25 + 0.3) * Math.cos(z * 0.25 + 1.1) * 0.5;
-  // Very high-frequency micro-bumps
-  y += Math.sin(x * 0.8) * Math.cos(z * 0.8) * 0.1;
-  // Extra noise for realism
-  y += Math.sin(x * 1.5 + 0.5) * Math.cos(z * 1.5 + 0.5) * 0.05;
-  
-  // Crater effect (pálya felemelkedése a széleken)
-  // Négyzet alakú kráter, ami pontosan körbeveszi az 50x50-es pályát
-  const maxDist = Math.max(Math.abs(x), Math.abs(z));
-  const PLAYABLE_BOUND = 55; // A pálya széle (50 a max koordináta, hagyunk kis helyet)
-  
-  if (maxDist > PLAYABLE_BOUND) {
-    // Exponenciális emelkedés a pálya szélétől
-    const excess = maxDist - PLAYABLE_BOUND;
-    // Lassan indul, majd meredeken emelkedik, de adunk hozzá zajt is hogy hegyes legyen
-    const mountainNoise = Math.sin(x * 0.03) * Math.cos(z * 0.03) * excess * 0.8;
-    y += Math.pow(excess, 1.2) * 0.5 + mountainNoise;
-  }
-  
-  return y;
-};
-
 // Díszítő elemek a pályán kívül (hegyek, nagy sziklák)
 const Scenery = () => {
   const { scene } = useGLTF('/models/Rocks.glb');
@@ -105,37 +76,37 @@ const Scenery = () => {
     const objects = [];
     const PLAYABLE_BOUND = 60; // A 50x50-es pálya határa
     const SCENERY_BOUND = 800; // Milyen messzire generáljunk díszleteket
-    const count = 800; // Díszítő sziklák száma
+    const count = 600; // Díszítő sziklák száma
     
     for (let i = 0; i < count * 3; i++) {
       if (objects.length >= count) break;
       
-      const x = (seededRandom(i, 0) - 0.5) * SCENERY_BOUND * 2;
-      const z = (seededRandom(0, i) - 0.5) * SCENERY_BOUND * 2;
+      const x = (Math.random() - 0.5) * SCENERY_BOUND * 2;
+      const z = (Math.random() - 0.5) * SCENERY_BOUND * 2;
       
       // Ne rakjunk sziklát a játszható területre
       if (Math.abs(x) < PLAYABLE_BOUND && Math.abs(z) < PLAYABLE_BOUND) {
         continue;
       }
       
-      const distance = Math.sqrt(x*x + z*z);
-      const distanceScale = distance > 150 ? (distance / 100) : 1;
+      // Magasság kiszámítása a zaj függvény alapján (ugyanaz mint a MarsSurface-ben)
+      const localY = -z;
+      const noise = 
+        Math.sin(x * 0.05) * Math.cos(localY * 0.05) * 2 +
+        Math.sin(x * 0.1) * Math.cos(localY * 0.1) * 1 +
+        Math.sin(x * 0.2) * Math.cos(localY * 0.2) * 0.5;
+        
+      const distance = Math.sqrt(x*x + localY*localY);
+      const macroHills = distance > 100 ? Math.sin(x * 0.01) * Math.cos(localY * 0.01) * (distance / 10) : 0;
+        
+      // Távolabbi hegyek legyenek sokkal nagyobbak
+      const distanceScale = distance > 200 ? (distance / 100) : 1;
       
-      const scale = (seededRandom(i, i) * 40 + 15) * distanceScale; // Hatalmas hegyek a távolban
+      const y = noise + macroHills - 2; // Kicsit süllyesszük a földbe
+      const scale = (Math.random() * 30 + 10) * distanceScale; // Hatalmas hegyek a távolban
+      const rotation = Math.random() * Math.PI * 2;
       
-      // Magasság a közös zajfüggvényből
-      const terrainY = terrainNoise(x, z);
-      
-      // Süllyesszük a földbe a sziklákat, hogy ne lebegjenek a meredek hegyoldalakon
-      const y = terrainY - (scale * 0.4); 
-      
-      const rotation = seededRandom(i, 1) * Math.PI * 2;
-      
-      // Random dőlés a hegyoldalakon lévő szikláknak
-      const rotX = (seededRandom(i, 2) - 0.5) * 0.5;
-      const rotZ = (seededRandom(i, 3) - 0.5) * 0.5;
-      
-      objects.push({ x, y, z, scale, rotation, rotX, rotZ });
+      objects.push({ x, y, z, scale, rotation });
     }
     return objects;
   }, []);
@@ -143,7 +114,7 @@ const Scenery = () => {
   return (
     <>
       {sceneryObjects.map((obj, i) => (
-        <group key={i} position={[obj.x, obj.y, obj.z]} rotation={[obj.rotX, obj.rotation, obj.rotZ]}>
+        <group key={i} position={[obj.x, obj.y, obj.z]} rotation={[0, obj.rotation, 0]}>
           <Clone object={scene} scale={obj.scale} castShadow receiveShadow />
         </group>
       ))}
@@ -164,7 +135,7 @@ const Rover = ({ position, terrainRef }: { position: [number, number, number], t
       
       // Raycast downward from above the rover to find terrain height
       raycaster.set(
-        new THREE.Vector3(targetPos.x, 500, targetPos.z),
+        new THREE.Vector3(targetPos.x, 50, targetPos.z),
         raycasterDown
       );
       
@@ -179,6 +150,7 @@ const Rover = ({ position, terrainRef }: { position: [number, number, number], t
         if (normal) {
           const targetQuaternion = new THREE.Quaternion();
           const up = new THREE.Vector3(0, 1, 0);
+          const axis = new THREE.Vector3();
           
           // Calculate rotation to align with terrain
           const worldNormal = normal.clone().applyMatrix3(
@@ -212,47 +184,24 @@ const Obstacle = ({ position, terrainRef, rotation }: { position: [number, numbe
   const [yPosition, setYPosition] = React.useState(position[1] + OBSTACLE_HEIGHT_OFFSET);
   
   useEffect(() => {
-    if (terrainRef.current && obstacleRef.current) {
+    if (terrainRef.current) {
       const targetPos = new THREE.Vector3(...position);
       
       raycaster.set(
-        new THREE.Vector3(targetPos.x, 500, targetPos.z),
+        new THREE.Vector3(targetPos.x, 50, targetPos.z),
         raycasterDown
       );
       
       const intersects = raycaster.intersectObject(terrainRef.current);
       
       if (intersects.length > 0) {
-        // Sink the rock slightly into the ground based on its scale so it doesn't float on slopes
-        const sinkOffset = OBSTACLE_SCALE * 0.15; 
-        setYPosition(intersects[0].point.y + OBSTACLE_HEIGHT_OFFSET - sinkOffset);
-        
-        // Align to terrain normal
-        const normal = intersects[0].face?.normal;
-        if (normal) {
-          const targetQuaternion = new THREE.Quaternion();
-          const up = new THREE.Vector3(0, 1, 0);
-          
-          const worldNormal = normal.clone().applyMatrix3(
-            new THREE.Matrix3().getNormalMatrix(
-              terrainRef.current.matrixWorld
-            )
-          ).normalize();
-          
-          targetQuaternion.setFromUnitVectors(up, worldNormal);
-          
-          // Apply the random Y rotation on top of the terrain alignment
-          const randomRotQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotation);
-          targetQuaternion.multiply(randomRotQuat);
-          
-          obstacleRef.current.quaternion.copy(targetQuaternion);
-        }
+        setYPosition(intersects[0].point.y + OBSTACLE_HEIGHT_OFFSET);
       }
     }
-  }, [terrainRef, position, raycaster, raycasterDown, rotation]);
+  }, [terrainRef, position, raycaster, raycasterDown]);
   
   return (
-    <group ref={obstacleRef} position={[position[0], yPosition, position[2]]}>
+    <group ref={obstacleRef} position={[position[0], yPosition, position[2]]} rotation={[0, rotation, 0]}>
       <Clone object={scene} scale={OBSTACLE_SCALE} castShadow receiveShadow />
     </group>
   );
@@ -278,45 +227,24 @@ const Mineral = ({ position, type, terrainRef, rotation }: { position: [number, 
   }, [type]);
 
   useEffect(() => {
-    if (terrainRef.current && mineralRef.current) {
+    if (terrainRef.current) {
       const targetPos = new THREE.Vector3(...position);
       
       raycaster.set(
-        new THREE.Vector3(targetPos.x, 500, targetPos.z),
+        new THREE.Vector3(targetPos.x, 50, targetPos.z),
         raycasterDown
       );
       
       const intersects = raycaster.intersectObject(terrainRef.current);
       
       if (intersects.length > 0) {
-        const sinkOffset = scale * 0.1; // Sink slightly
-        setYPosition(intersects[0].point.y + heightOffset - sinkOffset);
-        
-        // Align to terrain normal
-        const normal = intersects[0].face?.normal;
-        if (normal) {
-          const targetQuaternion = new THREE.Quaternion();
-          const up = new THREE.Vector3(0, 1, 0);
-          
-          const worldNormal = normal.clone().applyMatrix3(
-            new THREE.Matrix3().getNormalMatrix(
-              terrainRef.current.matrixWorld
-            )
-          ).normalize();
-          
-          targetQuaternion.setFromUnitVectors(up, worldNormal);
-          
-          const randomRotQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotation);
-          targetQuaternion.multiply(randomRotQuat);
-          
-          mineralRef.current.quaternion.copy(targetQuaternion);
-        }
+        setYPosition(intersects[0].point.y + heightOffset);
       }
     }
-  }, [terrainRef, position, raycaster, raycasterDown, heightOffset, scale, rotation]);
+  }, [terrainRef, position, raycaster, raycasterDown, heightOffset]);
 
   return (
-    <group ref={mineralRef} position={[position[0], yPosition, position[2]]}>
+    <group ref={mineralRef} position={[position[0], yPosition, position[2]]} rotation={[0, rotation, 0]}>
       <Clone object={scene} scale={scale} castShadow receiveShadow inject={injectMaterial ? <meshStandardMaterial color={injectMaterial.color} /> : undefined} />
     </group>
   );
@@ -333,12 +261,37 @@ const MarsSurface = React.forwardRef<THREE.Mesh>((props, ref) => {
       // Add procedural displacement to create terrain variation
       for (let i = 0; i < position.count; i++) {
         const x = position.getX(i);
-        const localY = position.getY(i);
-        const worldZ = -localY; // Because of the -Math.PI/2 rotation on X axis
+        const y = position.getY(i);
         
-        const z = terrainNoise(x, worldZ);
+        // Create hills and valleys using perlin-like noise simulation
+        const noise = 
+          Math.sin(x * 0.05) * Math.cos(y * 0.05) * 2 +
+          Math.sin(x * 0.1) * Math.cos(y * 0.1) * 1 +
+          Math.sin(x * 0.2) * Math.cos(y * 0.2) * 0.5 +
+          Math.random() * 0.3;
+          
+        // Távolabbi hegyek generálása a pályán kívül
+        const distance = Math.sqrt(x*x + y*y);
+        const macroHills = distance > 100 ? Math.sin(x * 0.01) * Math.cos(y * 0.01) * (distance / 10) : 0;
         
-        position.setZ(i, z);
+        // Pálya széle (ring)
+        let boundaryHeight = 0;
+        const bound = 50; // A pálya széle (50x50-es grid, középponttól 50 egység)
+        const transition = 5; // Átmenet hossza
+        
+        const distX = Math.max(0, Math.abs(x) - bound);
+        const distY = Math.max(0, Math.abs(y) - bound);
+        const distFromEdge = Math.max(distX, distY);
+        
+        if (distFromEdge > 0) {
+            // Sima átmenet a falhoz
+            const t = Math.min(distFromEdge / transition, 1);
+            // ease-in-out
+            const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+            boundaryHeight = ease * 3; // Kb 20 pixel magas fal (3 egység a 3D térben)
+        }
+        
+        position.setZ(i, noise + macroHills + boundaryHeight);
       }
       
       position.needsUpdate = true;
@@ -357,7 +310,7 @@ const MarsSurface = React.forwardRef<THREE.Mesh>((props, ref) => {
 
   return (
     <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]} receiveShadow castShadow>
-      <planeGeometry args={[2000, 2000, 512, 512]} />
+      <planeGeometry args={[3000, 3000, 256, 256]} />
       <meshStandardMaterial 
         color="#C1440E" 
         roughness={0.95} 

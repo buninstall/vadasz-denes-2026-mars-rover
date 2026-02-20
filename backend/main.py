@@ -56,7 +56,7 @@ def load_map_from_csv(file_path: str):
 
 
 @app.get("/map")
-def get_map(random_map: bool = False):
+def get_map(random_map: bool = True):
     target_file = DEFAULT_MAP
 
     if random_map:
