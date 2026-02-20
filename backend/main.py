@@ -1,5 +1,7 @@
 import asyncio
 import csv
+import os
+import random
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,44 +15,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Configuration
+MAPS_DIR = "mars_maps"
+DEFAULT_MAP = "mars_map_50x50.csv"
+
+
 class ConnectionManager:
-  def __init__(self):
-    self.active_connections: list[WebSocket] = []
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
 
-  async def connect(self, websocket: WebSocket):
-    await websocket.accept()
-    self.active_connections.append(websocket)
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
 
-  def disconnect(self, websocket: WebSocket):
-    self.active_connections.remove(websocket)
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
 
-  async def broadcast(self, message: dict):
-    for connection in self.active_connections:
-      try:
-        await connection.send_json(message)
-      except Exception:
-        connection.close()
-        self.active_connections.remove(connection)
-        pass
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                await connection.close()
+                if connection in self.active_connections:
+                    self.active_connections.remove(connection)
+
 
 def load_map_from_csv(file_path: str):
-  grid = []
-  try:
-    with open(file_path, "r") as f:
-      reader = csv.reader(f, skipinitialspace=True)
-      for row in reader:
-        clean_row = [cell.strip() for cell in row if cell.strip()]
-        if clean_row:
-          grid.append(clean_row)
-    return grid
-  except FileNotFoundError:
-    return None
+    grid = []
+    try:
+        with open(file_path, "r") as f:
+            reader = csv.reader(f, skipinitialspace=True)
+            for row in reader:
+                clean_row = [cell.strip() for cell in row if cell.strip()]
+                if clean_row:
+                    grid.append(clean_row)
+        return grid
+    except FileNotFoundError:
+        return None
+
 
 @app.get("/map")
-def get_map():
-  grid = load_map_from_csv("mars_map_50x50.csv")
+def get_map(random_map: bool = False):
+    target_file = DEFAULT_MAP
 
-  if grid is None:
-    return {"error": "Map file not found"}
+    if random_map:
+        if os.path.exists(MAPS_DIR) and os.path.isdir(MAPS_DIR):
+            # List all csv files in the directory
+            files = [f for f in os.listdir(MAPS_DIR) if f.endswith(".csv")]
+            if files:
+                target_file = os.path.join(MAPS_DIR, random.choice(files))
+            else:
+                return {"error": f"No CSV files found in {MAPS_DIR}"}
+        else:
+            return {"error": f"Directory {MAPS_DIR} not found"}
 
-  return {"width": len(grid[0]) if grid else 0, "height": len(grid), "data": grid}
+    grid = load_map_from_csv(target_file)
+
+    if grid is None:
+        return {"error": f"Map file '{target_file}' not found"}
+
+    return {
+        "filename": os.path.basename(target_file),
+        "width": len(grid[0]) if grid else 0,
+        "height": len(grid),
+        "data": grid,
+    }
