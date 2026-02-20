@@ -3,8 +3,8 @@ Inference script: load a trained Q-table and run a greedy episode to produce
 an optimised sequence of (row, col) waypoints.
 
 Usage:
-    python infer.py --map mars_maps/mars_map_00001.csv --brain mars_rover_brain.npy
-    python infer.py --map mars_maps/mars_map_00001.csv  # uses mars_rover_brain.npy by default
+    python infer.py --map mars_maps/mars_map_00001.csv --brain rover_model.npy
+    python infer.py --map mars_maps/mars_map_00001.csv  # uses rover_model.npy by default
 """
 
 import argparse
@@ -126,7 +126,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--brain",
-        default=os.path.join(BASE_DIR, "mars_rover_brain.npy"),
+        default=os.path.join(BASE_DIR, "rover_model.npy"),
         help="Path to the trained Q-table .npy file",
     )
     parser.add_argument("--json", action="store_true", help="Output result as JSON")
