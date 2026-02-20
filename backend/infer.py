@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 import numpy as np
-from ai import MarsMission, RLAgent, DAY_STEPS, CYCLE
+from ai import MarsMission, RLAgent, DAY_STEPS, CYCLE, K_CONSTANT
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,40 +57,42 @@ def run_inference(map_file: str, brain_file: str) -> dict:
     while step < MAX_STEPS:
         s_idx = agent.get_state_index(pos, battery, step, mins)
 
-        # Pure greedy: always pick the best-known action
+        # Pure greedy: 0 = mine, 1 = go home
         action = int(np.argmax(agent.q_table[s_idx]))
 
         target = (
             mission.start_pos
-            if (action > 2 or not mins)
+            if (action == 1 or not mins)
             else min(
                 mins, key=lambda m: max(abs(pos[0] - m[0]), abs(pos[1] - m[1]))
             )
         )
-        speed_choice = (action % 3) + 1
+        # Speed chosen by energy-budget heuristic
+        speed_choice = agent._pick_speed(pos, battery, step)
 
         new_pos, dist_moved = agent.path_step(pos, target, speed_choice)
 
-        # Energy
-        consumption = (2 * dist_moved ** 2) if dist_moved > 0 else 1
+        # Energy for this half-hour slot — E = k*v² when moving, 1 when standby
+        consumption = (K_CONSTANT * dist_moved ** 2) if dist_moved > 0 else 1
         is_day = (step % CYCLE) < DAY_STEPS
-        battery = min(100.0, battery - consumption + (10 if is_day else 0))
-        battery = max(0.0, battery)
+        solar_charge = 10 if is_day else 0
+        battery = max(0.0, min(100.0, battery - consumption + solar_charge))
 
         step += 1
         path.append(list(new_pos))
         battery_log.append(round(battery, 2))
 
-        # Mining
+        # Mining: one extra 0.5h slot, 2 energy consumed, rover stays put
         if new_pos in mins:
-            battery = min(100.0, battery - 2 + (10 if (step % CYCLE) < DAY_STEPS else 0))
+            mining_charge = 10 if (step % CYCLE) < DAY_STEPS else 0
+            battery = max(0.0, min(100.0, battery - 2 + mining_charge))
             minerals_collected.append({
                 "pos": list(new_pos),
                 "type": mission.minerals[new_pos],
                 "step": step,
             })
             mins.remove(new_pos)
-            step += 1  # mining costs one extra half-hour step
+            step += 1  # mining occupies one half-hour slot
             path.append(list(new_pos))
             battery_log.append(round(battery, 2))
 

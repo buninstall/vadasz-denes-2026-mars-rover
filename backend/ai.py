@@ -41,14 +41,41 @@ class RLAgent:
     def __init__(self, mission):
         self.m = mission
         # State: (Dist_Bin, Bat_Bin, Time_Bin) -> 5*5*2
-        # Actions: 0: Go to nearest mineral (S1), 1: (S2), 2: (S3), 3: Go Home (S1), 4: (S2), 5: (S3)
-        self.q_table = np.zeros((5, 5, 2, 6))
+        # Actions: 0 = go to nearest mineral, 1 = go home
+        # Speed is chosen separately by _pick_speed() based on energy budget
+        self.q_table = np.zeros((5, 5, 2, 2))
         self.lr = 0.1
         self.gamma = 0.95
         self.epsilon = 0.3  # Exploration rate
         # Path cache: reuse A* result while following the same target
         self._path_cache: list = []
         self._path_target = None
+
+    def _pick_speed(self, pos, battery, step) -> int:
+        """
+        Choose the fastest speed that leaves enough energy to return home.
+
+        Cost to return home at speed v (Chebyshev steps = ceil(dist/v)):
+            E_return = k * v^2 * ceil(dist/v) - solar_return
+        We keep a safety margin and pick the highest v (1, 2, 3) such that
+        battery - movement_cost_now - E_return_v >= SAFETY.
+        Falls back to speed 1 if even that is tight.
+        """
+        SAFETY = 5  # keep at least this much battery after returning home
+        dist_home = max(abs(pos[0] - self.m.start_pos[0]), abs(pos[1] - self.m.start_pos[1]))
+        is_day = (step % CYCLE) < DAY_STEPS
+        solar_per_step = 10 if is_day else 0
+
+        for v in (3, 2, 1):
+            move_cost = K_CONSTANT * v ** 2       # cost of this step at speed v
+            if dist_home == 0:
+                return v                           # already home, any speed fine
+            steps_home = -(-dist_home // v)       # ceil(dist/v)
+            # Net cost to get home: consumption minus solar earned en route
+            net_return = max(0, K_CONSTANT * v ** 2 * steps_home - solar_per_step * steps_home)
+            if battery - move_cost - net_return >= SAFETY:
+                return v
+        return 1  # always safe fallback
 
     def get_state_index(self, pos, battery, step, current_mins):
         # 1. Distance to nearest objective
@@ -139,46 +166,44 @@ class RLAgent:
             while step < self.MAX_TRAIN_STEPS:
                 s_idx = self.get_state_index(pos, battery, step, mins)
 
-                # Epsilon-greedy action selection
+                # Epsilon-greedy action selection (0 = mine, 1 = go home)
                 if random.random() < self.epsilon:
-                    action = random.randint(0, 5)
+                    action = random.randint(0, 1)
                 else:
-                    action = np.argmax(self.q_table[s_idx])
+                    action = int(np.argmax(self.q_table[s_idx]))
 
-                # Logic for action
+                # Direction: go to nearest mineral or head home
                 target = (
                     self.m.start_pos
-                    if (action > 2 or not mins)
+                    if (action == 1 or not mins)
                     else min(
                         mins, key=lambda m: max(abs(pos[0] - m[0]), abs(pos[1] - m[1]))
                     )
                 )
-                speed_choice = (action % 3) + 1
+                # Speed: fastest that still leaves enough energy to get home
+                speed_choice = self._pick_speed(pos, battery, step)
 
                 # Execute physical movement
                 old_dist = max(abs(pos[0] - target[0]), abs(pos[1] - target[1]))
                 new_pos, dist_moved = self.path_step(pos, target, speed_choice)
                 new_dist = max(abs(new_pos[0] - target[0]), abs(new_pos[1] - target[1]))
 
-                # Energy Calculation
-                # Consumption: E = k * v^2 (v is blocks moved in 0.5h)
-                # If idle, consumption is 1
-                consumption = (K_CONSTANT * (dist_moved**2)) if dist_moved > 0 else 1
+                # Energy for this half-hour slot (movement or standby if dist_moved==0)
+                # E = k*v²  (v = blocks moved); standby = 1; spec: k=2
+                consumption = (K_CONSTANT * (dist_moved ** 2)) if dist_moved > 0 else 1
                 is_day = (step % CYCLE) < DAY_STEPS
-                charge = 10 if is_day else 0
+                solar_charge = 10 if is_day else 0   # +10 per 0.5h daytime, 0 at night
 
-                battery = min(100, battery - consumption + charge)
+                battery = max(0.0, min(100.0, battery - consumption + solar_charge))
 
                 # Step penalty + shaped reward for making progress toward target
                 reward = -0.5 + 0.2 * (old_dist - new_dist)
 
-                # Mining Check
+                # Mining: takes one additional 0.5h slot, costs 2 energy, rover stays put
                 if new_pos in mins:
-                    # Task: Mining takes 0.5h and costs 2 units
                     step += 1
-                    battery = min(
-                        100, battery - 2 + (10 if (step % CYCLE) < DAY_STEPS else 0)
-                    )
+                    mining_charge = 10 if (step % CYCLE) < DAY_STEPS else 0
+                    battery = max(0.0, min(100.0, battery - 2 + mining_charge))
                     mins.remove(new_pos)
                     reward += 100  # Huge reward for collecting
 

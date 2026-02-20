@@ -38,7 +38,7 @@ def train_parallel(map_files: list) -> np.ndarray:
     total_steps = EPOCHS * n * EPISODES_PER_MAP
     global_step = 0
 
-    q_table = np.zeros((5, 5, 2, 6))
+    q_table = np.zeros((5, 5, 2, 2))  # 2 actions: mine vs go home
     q_shape = q_table.shape
 
     print(f"Workers : {N_WORKERS}  |  Maps : {n}  |  Epochs : {EPOCHS}  |  Episodes/map : {EPISODES_PER_MAP}")
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     t_start = time.time()
     q_table = train_parallel(map_files)
 
-    out_path = os.path.join(BASE_DIR, "mars_rover_brain.npy")
+    out_path = os.path.join(BASE_DIR, "rover_model.npy")
     np.save(out_path, q_table)
 
     print(f"\nTotal training time : {time.time() - t_start:.1f}s")
