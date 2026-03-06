@@ -1,57 +1,29 @@
 import { useState, useEffect } from 'react';
-import { SimulationState, MapData } from '../types';
+import { MapData, SimulationResult } from '../types';
 import { simulationApi } from '../services/api';
-
-const findStartPosition = (map: MapData): { x: number; y: number } => {
-  for (let y = 0; y < map.grid.length; y++) {
-    for (let x = 0; x < map.grid[y].length; x++) {
-      if (map.grid[y][x] === 'S') {
-        return { x, y };
-      }
-    }
-  }
-  return { x: 0, y: 0 }; // fallback
-};
 
 export const useSimulation = () => {
   const [map, setMap] = useState<MapData | null>(null);
-  const [state, setState] = useState<SimulationState | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
+  const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
 
-  // Initialize: get map
   useEffect(() => {
     simulationApi.getMap()
-      .then((mapData) => {
-        setMap(mapData);
-        
-        // Initialize rover at start position
-        const startPos = findStartPosition(mapData);
-        setState({
-          currentTime: "06:00",
-          isDay: true,
-          rover: {
-            x: startPos.x,
-            y: startPos.y,
-            battery: 100,
-            speed: 'normal' as const,
-            distanceMoved: 0,
-            mineralsCollected: { B: 0, Y: 0, G: 0 }
-          },
-          logs: []
-        });
-      })
-      .catch(err => console.error("Error fetching map:", err))
+      .then((mapData) => setMap(mapData))
+      .catch(err => console.error('Error fetching map:', err))
       .finally(() => setLoading(false));
   }, []);
 
   const start = async (hours: number) => {
+    if (!map) return;
     setLoading(true);
+    setIsPlaying(false);
+    setSimulationResult(null);
     try {
-      const { simulationId } = await simulationApi.startSimulation(hours);
-      setIsRunning(true);
-      // Logic for polling/step fetching would go here in a production app
-      // For now, this is a placeholder for the integration
+      const data = await simulationApi.startSimulation(hours) as SimulationResult;
+      setSimulationResult(data);
+      setIsPlaying(true);
     } catch (error) {
       console.error('Failed to start simulation', error);
     } finally {
@@ -59,5 +31,9 @@ export const useSimulation = () => {
     }
   };
 
-  return { map, state, isRunning, loading, start };
+  const onSimulationComplete = () => {
+    setIsPlaying(false);
+  };
+
+  return { map, simulationResult, isPlaying, loading, start, onSimulationComplete };
 };

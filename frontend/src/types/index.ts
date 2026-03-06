@@ -31,3 +31,35 @@ export interface SimulationState {
   rover: RoverState;
   logs: LogEntry[];
 }
+
+export interface SimLogEntry {
+  step: number;
+  time_hours: number;
+  is_day: boolean;
+  position: [number, number]; // [row, col]
+  battery: number;
+  speed: number;
+  distance_traveled: number;
+  minerals_collected: string[];
+  action: 'start' | 'move' | 'mine';
+}
+
+export interface SimMineral {
+  pos: [number, number]; // [row, col]
+  type: string;
+  step: number;
+}
+
+export interface SimulationResult {
+  path: [number, number][]; // [row, col][]
+  minerals: SimMineral[];
+  battery: number[];
+  steps_used: number;
+  success: boolean;
+  start: [number, number];
+  all_minerals: Record<string, string>;
+  logs: SimLogEntry[];
+}
+
+// Full path from backend: array of [row, col] points
+export type PathPoint = [number, number];

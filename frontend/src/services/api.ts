@@ -13,13 +13,8 @@ export const simulationApi = {
     return { grid: response.data.data || [] };
   },
   
-  startSimulation: async (hours: number): Promise<{ simulationId: string }> => {
-    const response = await api.post('/start', { hours });
-    return response.data;
-  },
-  
-  getStep: async (simulationId: string, currentStep: number): Promise<SimulationState> => {
-    const response = await api.get(`/step/${simulationId}/${currentStep}`);
+  startSimulation: async (hours: number): Promise<any> => {
+    const response = await api.post('/simulate', { map_file: 'mars_map_50x50.csv', time_limit_hours: hours });
     return response.data;
   },
 };

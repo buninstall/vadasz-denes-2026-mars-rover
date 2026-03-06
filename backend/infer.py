@@ -20,11 +20,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_STEPS = 10_000
 
 
-def run_inference(map_file: str, brain_file: str) -> dict:
+def run_inference(map_file: str, brain_file: str, time_limit_hours: int = 24) -> dict:
     """
     Run a single greedy episode (epsilon=0) and return the full result.
     The mission runs until all minerals are collected and the rover returns
-    home, or until the battery is depleted — there is no time limit.
+    home, or until the battery is depleted, or the time limit is reached.
 
     Returns a dict with:
         path        – list of [row, col] coordinates visited each step
@@ -32,6 +32,7 @@ def run_inference(map_file: str, brain_file: str) -> dict:
         battery     – list of battery level at each step
         steps_used  – total half-hour steps consumed
         success     – True if all minerals collected and rover returned home
+        logs        - detailed logs for each step
     """
     mission = MarsMission(map_file)
     agent = RLAgent(mission)
@@ -46,15 +47,31 @@ def run_inference(map_file: str, brain_file: str) -> dict:
     battery = 100.0
     mins = set(mission.minerals.keys())
     step = 0
+    total_distance = 0
 
     path = [list(pos)]
     battery_log = [battery]
     minerals_collected = []
+    logs = []
 
     agent._path_cache = []
     agent._path_target = None
+    
+    max_steps = max(MAX_STEPS, time_limit_hours * 2)
 
-    while step < MAX_STEPS:
+    logs.append({
+        "step": step,
+        "time_hours": step * 0.5,
+        "is_day": (step % CYCLE) < DAY_STEPS,
+        "position": list(pos),
+        "battery": round(battery, 2),
+        "speed": 0,
+        "distance_traveled": total_distance,
+        "minerals_collected": [],
+        "action": "start"
+    })
+
+    while step < max_steps:
         s_idx = agent.get_state_index(pos, battery, step, mins)
 
         # Pure greedy: 0 = mine, 1 = go home
@@ -79,22 +96,48 @@ def run_inference(map_file: str, brain_file: str) -> dict:
         battery = max(0.0, min(100.0, battery - consumption + solar_charge))
 
         step += 1
+        total_distance += dist_moved
         path.append(list(new_pos))
         battery_log.append(round(battery, 2))
+        
+        logs.append({
+            "step": step,
+            "time_hours": step * 0.5,
+            "is_day": (step % CYCLE) < DAY_STEPS,
+            "position": list(new_pos),
+            "battery": round(battery, 2),
+            "speed": speed_choice,
+            "distance_traveled": total_distance,
+            "minerals_collected": [],
+            "action": "move"
+        })
 
         # Mining: one extra 0.5h slot, 2 energy consumed, rover stays put
         if new_pos in mins:
             mining_charge = 10 if (step % CYCLE) < DAY_STEPS else 0
             battery = max(0.0, min(100.0, battery - 2 + mining_charge))
+            min_type = mission.minerals[new_pos]
             minerals_collected.append({
                 "pos": list(new_pos),
-                "type": mission.minerals[new_pos],
+                "type": min_type,
                 "step": step,
             })
             mins.remove(new_pos)
             step += 1  # mining occupies one half-hour slot
             path.append(list(new_pos))
             battery_log.append(round(battery, 2))
+            
+            logs.append({
+                "step": step,
+                "time_hours": step * 0.5,
+                "is_day": (step % CYCLE) < DAY_STEPS,
+                "position": list(new_pos),
+                "battery": round(battery, 2),
+                "speed": 0,
+                "distance_traveled": total_distance,
+                "minerals_collected": [min_type],
+                "action": "mine"
+            })
 
         if battery <= 0:
             print("Battery depleted — mission failed.")
@@ -114,6 +157,7 @@ def run_inference(map_file: str, brain_file: str) -> dict:
         "success": (not mins and pos == mission.start_pos),
         "start": list(mission.start_pos),
         "all_minerals": {str(k): v for k, v in mission.minerals.items()},
+        "logs": logs
     }
 
 

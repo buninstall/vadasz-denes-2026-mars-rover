@@ -2,8 +2,10 @@ import asyncio
 import csv
 import os
 import random
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from infer import run_inference
 
 app = FastAPI()
 
@@ -81,3 +83,28 @@ def get_map(random_map: bool = True):
         "height": len(grid),
         "data": grid,
     }
+
+class SimulationRequest(BaseModel):
+    map_file: str
+    time_limit_hours: int = 24
+
+@app.post("/simulate")
+def start_simulation(request: SimulationRequest):
+    # Resolve map file path
+    if request.map_file == DEFAULT_MAP:
+        map_path = request.map_file
+    else:
+        map_path = os.path.join(MAPS_DIR, request.map_file)
+        
+    if not os.path.exists(map_path):
+        raise HTTPException(status_code=404, detail=f"Map file '{request.map_file}' not found")
+        
+    brain_file = "rover_model.npy"
+    if not os.path.exists(brain_file):
+        raise HTTPException(status_code=404, detail=f"Brain file '{brain_file}' not found")
+        
+    try:
+        result = run_inference(map_path, brain_file, request.time_limit_hours)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
