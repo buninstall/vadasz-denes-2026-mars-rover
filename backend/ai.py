@@ -237,6 +237,25 @@ class RLAgent:
         self._pair_path_cache[key] = path
         return path
 
+    def _chebyshev_distance(self, a, b):
+        return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+
+    def _candidate_rank_key(
+        self,
+        pos,
+        mineral,
+        density_map,
+        cluster_size_map,
+        frontier_exposure_map,
+    ):
+        return (
+            self._chebyshev_distance(pos, mineral)
+            - 0.85 * min(density_map[mineral], 6)
+            - 0.35 * min(cluster_size_map[mineral] - 1, 14)
+            - 0.25 * min(frontier_exposure_map[mineral], 4),
+            self._chebyshev_distance(self.m.start_pos, mineral),
+        )
+
     def _is_frontier_mineral(self, mineral, current_mins):
         exposure = 0
 
@@ -259,6 +278,9 @@ class RLAgent:
         remaining = set(current_mins)
         cluster_size = {}
         cluster_frontier = {}
+        cluster_id_map = {}
+        cluster_members = {}
+        cluster_id = 0
 
         while remaining:
             seed = remaining.pop()
@@ -267,27 +289,33 @@ class RLAgent:
 
             while queue:
                 curr = queue.popleft()
-                for dr, dc in [
-                    (-1, -1), (-1, 0), (-1, 1),
-                    (0, -1),           (0, 1),
-                    (1, -1),  (1, 0),  (1, 1),
-                ]:
-                    nxt = (curr[0] + dr, curr[1] + dc)
-                    if nxt in remaining:
-                        remaining.remove(nxt)
-                        queue.append(nxt)
-                        cluster.append(nxt)
+                for dr in range(-CLUSTER_RADIUS, CLUSTER_RADIUS + 1):
+                    for dc in range(-CLUSTER_RADIUS, CLUSTER_RADIUS + 1):
+                        if dr == 0 and dc == 0:
+                            continue
+                        if max(abs(dr), abs(dc)) > CLUSTER_RADIUS:
+                            continue
+
+                        nxt = (curr[0] + dr, curr[1] + dc)
+                        if nxt in remaining:
+                            remaining.remove(nxt)
+                            queue.append(nxt)
+                            cluster.append(nxt)
 
             size = len(cluster)
             frontier_count = sum(
                 1 for mineral in cluster if self._is_frontier_mineral(mineral, current_mins) > 0
             )
+            cluster_members[cluster_id] = tuple(cluster)
 
             for mineral in cluster:
                 cluster_size[mineral] = size
                 cluster_frontier[mineral] = frontier_count
+                cluster_id_map[mineral] = cluster_id
 
-        return cluster_size, cluster_frontier
+            cluster_id += 1
+
+        return cluster_size, cluster_frontier, cluster_id_map, cluster_members
 
     def _candidate_density_map(self, current_mins):
         density = {}
@@ -299,6 +327,110 @@ class RLAgent:
                 and max(abs(mineral[0] - other[0]), abs(mineral[1] - other[1])) <= CLUSTER_RADIUS
             )
         return density
+
+    def _select_focus_cluster(self, pos, current_mins, cluster_id_map, cluster_members):
+        nearby_clusters = {}
+
+        for mineral in current_mins:
+            distance = self._chebyshev_distance(pos, mineral)
+            if distance > CLUSTER_RADIUS:
+                continue
+
+            cluster_id = cluster_id_map[mineral]
+            cluster_state = nearby_clusters.setdefault(
+                cluster_id,
+                {"min_distance": distance, "nearby_count": 0},
+            )
+            cluster_state["min_distance"] = min(cluster_state["min_distance"], distance)
+            cluster_state["nearby_count"] += 1
+
+        if not nearby_clusters:
+            return None
+
+        return min(
+            nearby_clusters,
+            key=lambda cid: (
+                nearby_clusters[cid]["min_distance"],
+                -nearby_clusters[cid]["nearby_count"],
+                -len(cluster_members[cid]),
+            ),
+        )
+
+    def _score_candidate(
+        self,
+        pos,
+        mineral,
+        evaluation,
+        time_left,
+        density_map,
+        cluster_size_map,
+        frontier_exposure_map,
+        cluster_frontier_map,
+    ):
+        density_bonus = min(density_map[mineral], 8)
+        cluster_bonus = min(cluster_size_map[mineral] - 1, 14)
+        frontier_bonus = min(frontier_exposure_map[mineral], 5)
+        cluster_frontier_bonus = min(cluster_frontier_map[mineral], 10)
+        distance_to_rover = self._chebyshev_distance(pos, mineral)
+        continuation_bonus = (
+            0.55
+            if distance_to_rover <= 1
+            else 0.2 if distance_to_rover <= CLUSTER_RADIUS else 0.0
+        )
+
+        return (
+            (
+                1.0
+                + 0.28 * density_bonus
+                + 0.06 * cluster_bonus
+                + 0.05 * frontier_bonus
+                + 0.02 * cluster_frontier_bonus
+                + continuation_bonus
+            )
+            / max(1.0, evaluation["to_target_steps"])
+            + 0.002 * evaluation["battery_after_return"]
+            + 0.001 * max(0, time_left - evaluation["roundtrip_steps"])
+        )
+
+    def _best_candidate_from_pool(
+        self,
+        candidates,
+        pos,
+        battery,
+        step,
+        max_steps,
+        time_left,
+        density_map,
+        cluster_size_map,
+        frontier_exposure_map,
+        cluster_frontier_map,
+    ):
+        best_target = None
+        best_evaluation = None
+        best_score = None
+
+        for mineral in candidates:
+            evaluation = self._evaluate_candidate(pos, mineral, battery, step, max_steps)
+            if evaluation is None:
+                continue
+
+            score = self._score_candidate(
+                pos,
+                mineral,
+                evaluation,
+                time_left,
+                density_map,
+                cluster_size_map,
+                frontier_exposure_map,
+                cluster_frontier_map,
+            )
+
+            if best_score is None or score > best_score:
+                best_target = mineral
+                best_evaluation = evaluation
+                best_score = score
+
+        return best_target, best_evaluation, best_score
 
     def _evaluate_candidate(self, pos, target, battery, step, max_steps):
         outbound_path = self.get_path(pos, target, passable_cells=(pos, target))
@@ -393,15 +525,23 @@ class RLAgent:
             return None
 
         density_map = self._candidate_density_map(current_mins)
-        cluster_size_map, cluster_frontier_map = self._cluster_maps(current_mins)
+        cluster_size_map, cluster_frontier_map, cluster_id_map, cluster_members = (
+            self._cluster_maps(current_mins)
+        )
         frontier_exposure_map = {
             mineral: self._is_frontier_mineral(mineral, current_mins)
             for mineral in current_mins
         }
+        focus_cluster_id = self._select_focus_cluster(
+            pos,
+            current_mins,
+            cluster_id_map,
+            cluster_members,
+        )
         adjacent_candidates = [
             mineral
             for mineral in current_mins
-            if max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])) <= 1
+            if self._chebyshev_distance(pos, mineral) <= 1
         ]
         frontier_candidates = [
             mineral for mineral in current_mins if frontier_exposure_map[mineral] > 0
@@ -410,12 +550,12 @@ class RLAgent:
 
         ranked_candidates = sorted(
             candidate_pool,
-            key=lambda mineral: (
-                max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1]))
-                - 0.85 * min(density_map[mineral], 6)
-                - 0.35 * min(cluster_size_map[mineral] - 1, 14)
-                - 0.25 * min(frontier_exposure_map[mineral], 4),
-                max(abs(self.m.start_pos[0] - mineral[0]), abs(self.m.start_pos[1] - mineral[1])),
+            key=lambda mineral: self._candidate_rank_key(
+                pos,
+                mineral,
+                density_map,
+                cluster_size_map,
+                frontier_exposure_map,
             ),
         )[:MAX_TARGET_CANDIDATES]
         if adjacent_candidates:
@@ -424,7 +564,7 @@ class RLAgent:
                     sorted(
                         adjacent_candidates,
                         key=lambda mineral: (
-                            max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])),
+                            self._chebyshev_distance(pos, mineral),
                             -cluster_size_map[mineral],
                         ),
                     ) + ranked_candidates
@@ -432,81 +572,77 @@ class RLAgent:
             )[:MAX_TARGET_CANDIDATES]
         ranked_candidate_set = set(ranked_candidates)
 
-        best_target = None
-        best_evaluation = None
-        best_score = None
         time_left = max_steps - step
 
-        for mineral in ranked_candidates:
-            evaluation = self._evaluate_candidate(pos, mineral, battery, step, max_steps)
-            if evaluation is None:
-                continue
-
-            density_bonus = min(density_map[mineral], 8)
-            cluster_bonus = min(cluster_size_map[mineral] - 1, 14)
-            frontier_bonus = min(frontier_exposure_map[mineral], 5)
-            cluster_frontier_bonus = min(cluster_frontier_map[mineral], 10)
-            continuation_bonus = (
-                0.35 if max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])) <= 1 else 0.0
+        # Once the rover is already inside a mineral neighborhood, finish that
+        # feasible local cluster before switching to a different area.
+        if focus_cluster_id is not None:
+            focus_candidates = sorted(
+                cluster_members[focus_cluster_id],
+                key=lambda mineral: (
+                    self._chebyshev_distance(pos, mineral),
+                    -density_map[mineral],
+                    -frontier_exposure_map[mineral],
+                ),
             )
-            score = (
-                (
-                    1.0
-                    + 0.28 * density_bonus
-                    + 0.06 * cluster_bonus
-                    + 0.05 * frontier_bonus
-                    + 0.02 * cluster_frontier_bonus
-                    + continuation_bonus
-                )
-                / max(1.0, evaluation["to_target_steps"])
-                + 0.002 * evaluation["battery_after_return"]
-                + 0.001 * max(0, time_left - evaluation["roundtrip_steps"])
+            focus_target, focus_evaluation, _ = self._best_candidate_from_pool(
+                focus_candidates,
+                pos,
+                battery,
+                step,
+                max_steps,
+                time_left,
+                density_map,
+                cluster_size_map,
+                frontier_exposure_map,
+                cluster_frontier_map,
             )
+            if focus_target is not None:
+                return focus_target, focus_evaluation
 
-            if best_score is None or score > best_score:
-                best_target = mineral
-                best_evaluation = evaluation
-                best_score = score
+        best_target, best_evaluation, best_score = self._best_candidate_from_pool(
+            ranked_candidates,
+            pos,
+            battery,
+            step,
+            max_steps,
+            time_left,
+            density_map,
+            cluster_size_map,
+            frontier_exposure_map,
+            cluster_frontier_map,
+        )
 
         if best_target is None and len(ranked_candidate_set) < len(current_mins):
             fallback_candidates = sorted(
                 (mineral for mineral in current_mins if mineral not in ranked_candidate_set),
-                key=lambda mineral: (
-                    max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])),
-                    max(abs(self.m.start_pos[0] - mineral[0]), abs(self.m.start_pos[1] - mineral[1])),
+                key=lambda mineral: self._candidate_rank_key(
+                    pos,
+                    mineral,
+                    density_map,
+                    cluster_size_map,
+                    frontier_exposure_map,
                 ),
             )
 
-            for mineral in fallback_candidates:
-                evaluation = self._evaluate_candidate(pos, mineral, battery, step, max_steps)
-                if evaluation is None:
-                    continue
-
-                density_bonus = min(density_map[mineral], 8)
-                cluster_bonus = min(cluster_size_map[mineral] - 1, 14)
-                frontier_bonus = min(frontier_exposure_map[mineral], 5)
-                cluster_frontier_bonus = min(cluster_frontier_map[mineral], 10)
-                continuation_bonus = (
-                    0.35 if max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])) <= 1 else 0.0
-                )
-                score = (
-                    (
-                        1.0
-                        + 0.28 * density_bonus
-                        + 0.06 * cluster_bonus
-                        + 0.05 * frontier_bonus
-                        + 0.02 * cluster_frontier_bonus
-                        + continuation_bonus
-                    )
-                    / max(1.0, evaluation["to_target_steps"])
-                    + 0.002 * evaluation["battery_after_return"]
-                    + 0.001 * max(0, time_left - evaluation["roundtrip_steps"])
-                )
-
-                if best_score is None or score > best_score:
-                    best_target = mineral
-                    best_evaluation = evaluation
-                    best_score = score
+            fallback_target, fallback_evaluation, fallback_score = self._best_candidate_from_pool(
+                fallback_candidates,
+                pos,
+                battery,
+                step,
+                max_steps,
+                time_left,
+                density_map,
+                cluster_size_map,
+                frontier_exposure_map,
+                cluster_frontier_map,
+            )
+            if best_score is None or (
+                fallback_score is not None and fallback_score > best_score
+            ):
+                best_target = fallback_target
+                best_evaluation = fallback_evaluation
+                best_score = fallback_score
 
         if best_target is None:
             return None
