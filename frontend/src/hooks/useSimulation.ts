@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { MapData, SimulationResult } from '../types';
 import { simulationApi } from '../services/api';
 
+const MIN_TIME_LIMIT_HOURS = 24;
+
 export const useSimulation = () => {
   const [map, setMap] = useState<MapData | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
@@ -21,7 +23,9 @@ export const useSimulation = () => {
     setIsPlaying(false);
     setSimulationResult(null);
     try {
-      const data = await simulationApi.startSimulation(hours) as SimulationResult;
+      const normalizedHours = Math.max(MIN_TIME_LIMIT_HOURS, Math.floor(hours));
+      const mapFile = map.filename ?? 'mars_map_50x50.csv';
+      const data = await simulationApi.startSimulation(mapFile, normalizedHours) as SimulationResult;
       setSimulationResult(data);
       setIsPlaying(true);
     } catch (error) {

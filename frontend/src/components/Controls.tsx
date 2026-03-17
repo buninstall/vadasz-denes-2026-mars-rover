@@ -5,8 +5,15 @@ interface ControlsProps {
   isLoading: boolean;
 }
 
+const MIN_HOURS = 24;
+
 const Controls: React.FC<ControlsProps> = ({ onStart, isLoading }) => {
-  const [hours, setHours] = useState(24);
+  const [hours, setHours] = useState(MIN_HOURS);
+
+  const normalizeHours = (value: number) => {
+    if (!Number.isFinite(value)) return MIN_HOURS;
+    return Math.max(MIN_HOURS, Math.floor(value));
+  };
 
   return (
     <div
@@ -29,9 +36,9 @@ const Controls: React.FC<ControlsProps> = ({ onStart, isLoading }) => {
         </label>
         <input
           type="number"
-          min="24"
+          min={MIN_HOURS}
           value={hours}
-          onChange={(e) => setHours(parseInt(e.target.value) || 24)}
+          onChange={(e) => setHours(normalizeHours(Number(e.target.value)))}
           style={{
             background: 'rgba(3,7,18,0.9)',
             color: '#f3f4f6',
@@ -46,7 +53,7 @@ const Controls: React.FC<ControlsProps> = ({ onStart, isLoading }) => {
         />
       </div>
       <button
-        onClick={() => onStart(hours)}
+        onClick={() => onStart(normalizeHours(hours))}
         disabled={isLoading}
         style={{
           padding: '9px 18px',
