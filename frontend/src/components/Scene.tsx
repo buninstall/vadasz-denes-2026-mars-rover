@@ -23,15 +23,13 @@ interface SceneProps {
 }
 
 // ==== SETTINGS ====
-const ROVER_HEIGHT_OFFSET = 0.15;
+const ROVER_GROUND_CLEARANCE = 0.04;
 const ROVER_SCALE = 0.7;
 const OBSTACLE_HEIGHT_OFFSET = -1.2;  // deeply embed model origin into terrain
 const OBSTACLE_SCALE = 4.5;
 const OBSTACLE_RANDOM_OFFSET = 0.5;
-const MINERAL_HEIGHT_OFFSET = -0.35;
+const MINERAL_EMBED_DEPTH = 0.03;
 const MINERAL_SCALE = 0.15;
-const MINERAL_RANDOM_OFFSET = 1.2;
-const GOLD_HEIGHT_OFFSET = -0.5;
 const GOLD_SCALE = 5;
 const RENDER_DISTANCE = 1500;
 // ==================
@@ -93,6 +91,19 @@ function extractFirstMesh(gltfScene: THREE.Group): { geo: THREE.BufferGeometry; 
   return result;
 }
 
+const MODEL_GROUND_OFFSET_CACHE = new Map<string, number>();
+
+function getModelGroundOffset(scene: THREE.Group, cacheKey: string, scale: number): number {
+  const key = `${cacheKey}_${scale}`;
+  const cached = MODEL_GROUND_OFFSET_CACHE.get(key);
+  if (cached !== undefined) return cached;
+
+  const box = new THREE.Box3().setFromObject(scene);
+  const offset = Number.isFinite(box.min.y) ? -box.min.y * scale : 0;
+  MODEL_GROUND_OFFSET_CACHE.set(key, offset);
+  return offset;
+}
+
 // ── Path line drawn in world space showing the full planned route
 const PathLine = React.memo(({ pathPoints }: { pathPoints: THREE.Vector3[] }) => {
   const geometry = useMemo(() => {
@@ -108,7 +119,7 @@ const PathLine = React.memo(({ pathPoints }: { pathPoints: THREE.Vector3[] }) =>
   return (
     // @ts-ignore
     <line geometry={geometry}>
-      <lineBasicMaterial color="#ff7700" opacity={0.35} transparent linewidth={1} />
+      <lineBasicMaterial color="#d1d5db" opacity={0.25} transparent linewidth={1} />
     </line>
   );
 });
@@ -126,7 +137,7 @@ const MiningEffect = React.memo(({ position }: { position: [number, number, numb
   return (
     <mesh ref={ringRef} position={[position[0], position[1] + 0.4, position[2]]}>
       <torusGeometry args={[0.6, 0.08, 6, 24]} />
-      <meshBasicMaterial color="#ffaa00" transparent opacity={0.6} />
+      <meshBasicMaterial color="#e5e7eb" transparent opacity={0.6} />
     </mesh>
   );
 });
@@ -174,37 +185,104 @@ const SceneryInstanced = React.memo(() => {
 });
 
 // ── Rover: no raycasting — uses precomputed terrain heights per path step
-const Rover = React.memo(({ pathPoints, pathHeights, stepRef, isMiningRef }: {
+const Rover = React.memo(({ pathPoints, stepRef, isMiningRef }: {
   pathPoints: THREE.Vector3[];
-  pathHeights: number[];
   stepRef: React.MutableRefObject<number>;
   isMiningRef: React.MutableRefObject<boolean>;
 }) => {
   const { scene } = useGLTF('/models/Rover.glb');
   const roverRef = useRef<THREE.Group>(null);
-  const targetPos = useRef(new THREE.Vector3());
-  const prevRotY = useRef(0);
+  const velocityRef = useRef(new THREE.Vector3());
+  const headingRef = useRef(new THREE.Vector2(0, 1));
+  const yawRef = useRef(0);
+  const groundOffset = useMemo(
+    () => getModelGroundOffset(scene, '/models/Rover.glb', ROVER_SCALE),
+    [scene],
+  );
+
+  useEffect(() => {
+    if (!roverRef.current || pathPoints.length === 0) return;
+    const start = pathPoints[0];
+    const y = estimateTerrainHeight(start.x, start.z) + groundOffset + ROVER_GROUND_CLEARANCE;
+    roverRef.current.position.set(start.x, y, start.z);
+    velocityRef.current.set(0, 0, 0);
+  }, [pathPoints, groundOffset]);
 
   useFrame((_, delta) => {
     if (!roverRef.current || pathPoints.length === 0) return;
+
     const idx = Math.min(stepRef.current, pathPoints.length - 1);
-    const pt = pathPoints[idx];
-    targetPos.current.set(pt.x, (pathHeights[idx] ?? 0) + ROVER_HEIGHT_OFFSET, pt.z);
+    const target = pathPoints[idx];
+    const position = roverRef.current.position;
+    const velocity = velocityRef.current;
 
-    // Very fast smooth position — stays tight on stepped position
-    roverRef.current.position.lerp(targetPos.current, 14 * delta);
+    const accelScale = isMiningRef.current ? 6 : 18;
+    velocity.x += THREE.MathUtils.clamp((target.x - position.x) * accelScale, -20, 20) * delta;
+    velocity.z += THREE.MathUtils.clamp((target.z - position.z) * accelScale, -20, 20) * delta;
 
-    if (idx > 0) {
-      const prev = pathPoints[Math.max(0, idx - 1)];
-      const dx = pt.x - prev.x, dz = pt.z - prev.z;
-      if (Math.abs(dx) + Math.abs(dz) > 0.01) {
-        const targetRotY = Math.atan2(dx, dz);
-        const diff = ((targetRotY - prevRotY.current + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        prevRotY.current += diff * Math.min(1, 8 * delta);
-        roverRef.current.rotation.y = prevRotY.current;
-      }
+    const horizontalDamping = Math.exp(-6 * delta);
+    velocity.x *= horizontalDamping;
+    velocity.z *= horizontalDamping;
+
+    const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
+    if (horizontalSpeed > 16) {
+      const scale = 16 / horizontalSpeed;
+      velocity.x *= scale;
+      velocity.z *= scale;
     }
-    if (isMiningRef.current) roverRef.current.position.x += Math.sin(Date.now() * 0.02) * 0.002;
+
+    position.x += velocity.x * delta;
+    position.z += velocity.z * delta;
+
+    const desiredY = estimateTerrainHeight(position.x, position.z) + groundOffset + ROVER_GROUND_CLEARANCE;
+    velocity.y += (desiredY - position.y) * 45 * delta;
+    velocity.y -= 7.5 * delta;
+    velocity.y *= Math.exp(-7 * delta);
+    position.y += velocity.y * delta;
+
+    if (position.y < desiredY) {
+      position.y = desiredY;
+      if (velocity.y < 0) velocity.y = 0;
+    }
+
+    if (horizontalSpeed > 0.05) {
+      headingRef.current.set(velocity.x, velocity.z).normalize();
+    }
+
+    const targetYaw = Math.atan2(headingRef.current.x, headingRef.current.y);
+    const yawDiff = ((targetYaw - yawRef.current + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    yawRef.current += yawDiff * Math.min(1, 10 * delta);
+    roverRef.current.rotation.y = yawRef.current;
+
+    const dirX = headingRef.current.x;
+    const dirZ = headingRef.current.y;
+    const rightX = dirZ;
+    const rightZ = -dirX;
+    const sample = 0.9;
+
+    const hFront = estimateTerrainHeight(position.x + dirX * sample, position.z + dirZ * sample);
+    const hBack = estimateTerrainHeight(position.x - dirX * sample, position.z - dirZ * sample);
+    const hLeft = estimateTerrainHeight(position.x - rightX * sample, position.z - rightZ * sample);
+    const hRight = estimateTerrainHeight(position.x + rightX * sample, position.z + rightZ * sample);
+
+    const targetPitch = THREE.MathUtils.clamp(Math.atan2(hBack - hFront, sample * 2), -0.35, 0.35);
+    const targetRoll = THREE.MathUtils.clamp(Math.atan2(hLeft - hRight, sample * 2), -0.35, 0.35);
+
+    roverRef.current.rotation.x = THREE.MathUtils.lerp(
+      roverRef.current.rotation.x,
+      targetPitch,
+      Math.min(1, 8 * delta),
+    );
+    roverRef.current.rotation.z = THREE.MathUtils.lerp(
+      roverRef.current.rotation.z,
+      targetRoll,
+      Math.min(1, 8 * delta),
+    );
+
+    if (isMiningRef.current) {
+      const vibration = Math.sin(Date.now() * 0.025) * 0.004;
+      roverRef.current.position.y += vibration;
+    }
   });
 
   return (
@@ -263,8 +341,14 @@ const Mineral = React.memo(({ position, type, rotation, collected }: {
   const { scene } = useGLTF(modelPath);
   const mineralRef = useRef<THREE.Group>(null);
   const scale = type === 'Y' ? GOLD_SCALE : MINERAL_SCALE;
-  const heightOffset = type === 'Y' ? GOLD_HEIGHT_OFFSET : MINERAL_HEIGHT_OFFSET;
-  const yPos = useMemo(() => estimateTerrainHeight(position[0], position[2]) + heightOffset, [position, heightOffset]);
+  const groundOffset = useMemo(
+    () => getModelGroundOffset(scene, modelPath, scale),
+    [scene, modelPath, scale],
+  );
+  const yPos = useMemo(
+    () => estimateTerrainHeight(position[0], position[2]) + groundOffset - MINERAL_EMBED_DEPTH,
+    [position, groundOffset],
+  );
   // Use separate ref to track collected to avoid stale closure in useFrame
   const collectedRef = useRef(collected);
   useEffect(() => { collectedRef.current = collected; }, [collected]);
@@ -341,7 +425,7 @@ const MapMinerals = React.memo(({ map, mineralCollectionMap, collectedStep }: {
         return (
           <Mineral
             key={`min-${x}-${y}`}
-            position={getRandomizedPosition(x, y, MINERAL_RANDOM_OFFSET)}
+            position={getPosition(x, y)}
             type={cell as 'Y' | 'B' | 'G'}
             rotation={getRandomRotation(x, y)}
             collected={collectedAt !== undefined && collectedAt <= collectedStep}
@@ -477,10 +561,7 @@ const SimulationController = ({
         cameraTargetRef.current.set(pathPoints[step].x, (pathHeights[step] ?? 0) + 2, pathPoints[step].z);
       }
 
-      // Trigger React re-render every 8 steps — good balance: minerals disappear promptly
-      if (step % 8 === 0 || step === maxStep) {
-        onStepBatch(step);
-      }
+      onStepBatch(step);
     }
   });
 
@@ -609,10 +690,10 @@ const Scene: React.FC<SceneProps> = ({
           {isDay ? (
             <>
               <Sky sunPosition={[100, 20, 100]} turbidity={0.1} rayleigh={0.5} />
-              <ambientLight intensity={0.5} />
+              <ambientLight intensity={0.55} />
               <directionalLight
                 position={[50, 50, 20]}
-                intensity={1.5}
+                intensity={1.35}
                 castShadow
                 shadow-mapSize={[1024, 1024]}
                 shadow-camera-far={150}
@@ -625,14 +706,10 @@ const Scene: React.FC<SceneProps> = ({
           ) : (
             <>
               <Stars radius={100} depth={50} count={4000} factor={4} saturation={0} fade speed={1} />
-              {/* Night: bright enough to see terrain and all objects clearly */}
-              <ambientLight intensity={0.45} color="#9aaabb" />
-              {/* Moon-like directional light from the side */}
-              <directionalLight position={[-60, 80, -30]} intensity={0.7} color="#aabbdd" />
-              {/* Subtle fill from below horizon */}
-              <directionalLight position={[40, 20, 60]} intensity={0.25} color="#334466" />
-              {/* Rover headlight */}
-              <pointLight position={currentRoverPos} intensity={4} distance={40} color="#ffffff" castShadow />
+              <ambientLight intensity={0.62} color="#b8c0d0" />
+              <hemisphereLight intensity={0.38} color="#d5deef" groundColor="#1c2230" />
+              <directionalLight position={[-60, 80, -30]} intensity={0.55} color="#dbe4f2" />
+              <pointLight position={currentRoverPos} intensity={5} distance={46} color="#f8fafc" castShadow />
             </>
           )}
 
@@ -651,7 +728,6 @@ const Scene: React.FC<SceneProps> = ({
 
           <Rover
             pathPoints={pathPoints.length > 0 ? pathPoints : [roverInitPoint]}
-            pathHeights={pathHeights.length > 0 ? pathHeights : [estimateTerrainHeight(roverInitPoint.x, roverInitPoint.z)]}
             stepRef={stepRef}
             isMiningRef={isMiningRef}
           />
@@ -673,7 +749,7 @@ const Scene: React.FC<SceneProps> = ({
             />
           )}
 
-          <fog attach="fog" args={[isDay ? '#d28c63' : '#050510', 50, RENDER_DISTANCE]} />
+          <fog attach="fog" args={[isDay ? '#d28c63' : '#111827', 90, RENDER_DISTANCE]} />
           <CameraController targetRef={cameraTargetRef} cameraModeRef={cameraModeRef} />
         </Suspense>
       </Canvas>
@@ -700,22 +776,23 @@ const Scene: React.FC<SceneProps> = ({
             style={{
               display: 'flex',
               gap: 4,
-              background: 'rgba(8,3,1,0.82)',
-              border: '1px solid #5a2008',
+              background: 'rgba(3,7,18,0.75)',
+              border: '1px solid #374151',
               borderRadius: 8,
               padding: '4px 8px',
+              backdropFilter: 'blur(8px)',
             }}
           >
-            <span style={{ color: '#7a3010', fontSize: 11, alignSelf: 'center', marginRight: 4 }}>Sebesség</span>
+            <span style={{ color: '#9ca3af', fontSize: 11, alignSelf: 'center', marginRight: 4 }}>Sebesség</span>
             {SPEEDS.map(s => (
               <button
                 key={s}
                 onClick={() => setSpeed(s)}
                 style={{
-                  background: speed === s ? '#c4501a' : 'rgba(30,10,3,0.9)',
-                  border: '1px solid ' + (speed === s ? '#ff7700' : '#4a1a08'),
+                  background: speed === s ? '#f3f4f6' : 'transparent',
+                  border: '1px solid ' + (speed === s ? '#f3f4f6' : '#4b5563'),
                   borderRadius: 5,
-                  color: speed === s ? '#fff' : '#cc6633',
+                  color: speed === s ? '#030712' : '#d1d5db',
                   fontSize: 11,
                   fontFamily: 'monospace',
                   fontWeight: 700,
@@ -735,11 +812,12 @@ const Scene: React.FC<SceneProps> = ({
             style={{
               display: 'flex',
               gap: 8,
-              background: 'rgba(8,3,1,0.82)',
-              border: '1px solid #5a2008',
+              background: 'rgba(3,7,18,0.75)',
+              border: '1px solid #374151',
               borderRadius: 8,
               padding: '6px 12px',
               alignItems: 'center',
+              backdropFilter: 'blur(8px)',
             }}
           >
             {/* Pause / Resume */}
@@ -747,10 +825,10 @@ const Scene: React.FC<SceneProps> = ({
               onClick={() => setLocalPaused(p => !p)}
               disabled={!isPlaying}
               style={{
-                background: isActivelyPlaying ? 'rgba(30,10,3,0.9)' : '#c4501a',
-                border: '1px solid ' + (isActivelyPlaying ? '#4a1a08' : '#ff7700'),
+                background: isActivelyPlaying ? 'transparent' : '#f3f4f6',
+                border: '1px solid ' + (isActivelyPlaying ? '#4b5563' : '#f3f4f6'),
                 borderRadius: 6,
-                color: isActivelyPlaying ? '#ff9955' : '#fff',
+                color: isActivelyPlaying ? '#d1d5db' : '#030712',
                 fontSize: 18,
                 padding: '4px 14px',
                 cursor: isPlaying ? 'pointer' : 'not-allowed',
@@ -763,16 +841,16 @@ const Scene: React.FC<SceneProps> = ({
               {localPaused || !isPlaying ? '▶' : '⏸'}
             </button>
 
-            <div style={{ width: 1, height: 24, background: '#3a1208' }} />
+            <div style={{ width: 1, height: 24, background: '#374151' }} />
 
             {/* Camera mode toggle */}
             <button
               onClick={() => setCameraMode(m => m === 'follow' ? 'overview' : 'follow')}
               style={{
-                background: cameraMode === 'follow' ? '#1a4a1a' : '#1a2a4a',
-                border: '1px solid ' + (cameraMode === 'follow' ? '#22aa44' : '#2255cc'),
+                background: cameraMode === 'follow' ? '#f3f4f6' : 'transparent',
+                border: '1px solid ' + (cameraMode === 'follow' ? '#f3f4f6' : '#4b5563'),
                 borderRadius: 6,
-                color: cameraMode === 'follow' ? '#44ee77' : '#5599ff',
+                color: cameraMode === 'follow' ? '#030712' : '#d1d5db',
                 fontSize: 11,
                 fontFamily: 'monospace',
                 fontWeight: 700,
@@ -783,7 +861,7 @@ const Scene: React.FC<SceneProps> = ({
               }}
               title="Kamera váltás: rover követés / térkép nézet"
             >
-              {cameraMode === 'follow' ? '🎥 Rover követés' : '🗺 Térkép nézet'}
+              {cameraMode === 'follow' ? 'Követés' : 'Áttekintés'}
             </button>
           </div>
         </div>

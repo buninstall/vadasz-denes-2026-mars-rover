@@ -17,11 +17,11 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep }) 
   const visibleLogs: SimLogEntry[] = useMemo(() => {
     if (!simulationResult?.logs) return [];
     const end = Math.min(currentStep, simulationResult.logs.length - 1);
-    // Show last ~20 interesting entries (mines + every 10th step)
+    // Show recent meaningful entries (mining + regular movement snapshots)
     const filtered: SimLogEntry[] = [];
-    for (let i = end; i >= 0 && filtered.length < 20; i--) {
+    for (let i = end; i >= 0 && filtered.length < 24; i--) {
       const l = simulationResult.logs[i];
-      if (l.action === 'mine' || l.action === 'start' || i % 10 === 0) {
+      if (l.action === 'mine' || l.action === 'start' || i % 6 === 0) {
         filtered.push(l);
       }
     }
@@ -31,13 +31,14 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep }) 
   return (
     <div
       style={{
-        background: 'rgba(10,3,1,0.85)',
-        border: '1px solid #5a2008',
+        background: 'rgba(2,6,14,0.68)',
+        border: '1px solid #374151',
         borderRadius: 8,
         overflow: 'hidden',
         fontFamily: 'monospace',
         fontSize: 11,
-        boxShadow: '0 4px 24px rgba(200,60,10,0.12)',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.25)',
+        backdropFilter: 'blur(8px)',
       }}
     >
       {/* Header */}
@@ -47,16 +48,16 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep }) 
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '7px 12px',
-          borderBottom: '1px solid #3a1206',
-          background: 'rgba(20,8,2,0.9)',
+          borderBottom: '1px solid #374151',
+          background: 'rgba(3,7,18,0.85)',
         }}
       >
-        <span style={{ color: '#c4501a', fontWeight: 700, letterSpacing: '0.15em', fontSize: 9, textTransform: 'uppercase' }}>
+        <span style={{ color: '#f3f4f6', fontWeight: 700, letterSpacing: '0.15em', fontSize: 9, textTransform: 'uppercase' }}>
           Eseménynapló
         </span>
         {simulationResult && (
-          <span style={{ color: '#7a3010', fontSize: 9, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#ff7700', display: 'inline-block' }} />
+          <span style={{ color: '#9ca3af', fontSize: 9, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f3f4f6', display: 'inline-block' }} />
             LIVE
           </span>
         )}
@@ -65,7 +66,7 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep }) 
       {/* Log entries */}
       <div style={{ height: 200, overflowY: 'auto', padding: '6px 0' }}>
         {visibleLogs.length === 0 ? (
-          <div style={{ color: '#3a1206', padding: '8px 12px', fontStyle: 'italic' }}>
+          <div style={{ color: '#6b7280', padding: '8px 12px', fontStyle: 'italic' }}>
             Nincs telemetriai adat…
           </div>
         ) : (
@@ -78,30 +79,30 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep }) 
                   display: 'flex',
                   gap: 8,
                   padding: '3px 12px',
-                  background: isMine ? 'rgba(255,150,20,0.07)' : 'transparent',
-                  borderLeft: isMine ? '2px solid #ff8800' : '2px solid transparent',
+                  background: isMine ? 'rgba(243,244,246,0.06)' : 'transparent',
+                  borderLeft: isMine ? '2px solid #e5e7eb' : '2px solid transparent',
                 }}
               >
-                <span style={{ color: '#5a2808', whiteSpace: 'nowrap' }}>
+                <span style={{ color: '#9ca3af', whiteSpace: 'nowrap' }}>
                   [{formatTime(6 + log.time_hours)}]
                 </span>
-                <span style={{ color: '#444466', whiteSpace: 'nowrap' }}>
+                <span style={{ color: '#cbd5e1', whiteSpace: 'nowrap' }}>
                   {log.position[0]},{log.position[1]}
                 </span>
-                <span style={{ color: isMine ? '#ffaa00' : '#7a5030', flex: 1 }}>
+                <span style={{ color: '#f3f4f6', flex: 1 }}>
                   {log.action === 'mine'
-                    ? `⛏ Bányászat: ${log.minerals_collected.join(', ')}`
+                    ? `Bányászat: ${log.minerals_collected.join(', ')}`
                     : log.action === 'start'
-                    ? '▶ Misszió indítva'
-                    : '→ Mozgás'}
+                    ? 'Misszió indítva'
+                    : 'Mozgás'}
                 </span>
                 <span
                   style={{
-                    color: log.battery < 20 ? '#ff4444' : log.battery < 50 ? '#e8a020' : '#22bb44',
+                    color: '#e5e7eb',
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  ⚡{log.battery.toFixed(0)}%
+                  {log.battery.toFixed(0)}%
                 </span>
               </div>
             );

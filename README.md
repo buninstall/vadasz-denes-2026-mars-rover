@@ -57,8 +57,12 @@ Szimuláció indítása:
 ```bash
 curl -X POST "http://127.0.0.1:8000/simulate" \
   -H "Content-Type: application/json" \
-  -d '{"map_file":"mars_map_50x50.csv","time_limit_hours":24}'
+  -d '{"map_file":"mars_map_50x50.csv","time_limit_hours":24,"collect_all":true}'
 ```
+
+Megjegyzés:
+- `collect_all=true` (alapértelmezett): a rover addig fut, amíg minden ásványt begyűjt és visszaér a start pontra.
+- `collect_all=false`: a szimuláció a megadott órakeretet (`time_limit_hours`) tiszteletben tartja.
 
 ## 6) Tréning (modell újratanítása)
 
@@ -84,6 +88,12 @@ Másik map példával:
 
 ```bash
 python infer.py --map mars_maps/mars_map_00001.csv --brain rover_model.npy --hours 24 --json
+```
+
+Időkeret-korlátos futás (nem teljes begyűjtés):
+
+```bash
+python infer.py --map mars_maps/mars_map_00001.csv --hours 24 --respect-time-limit --json
 ```
 
 ## 8) Frontend indítása (dashboard)

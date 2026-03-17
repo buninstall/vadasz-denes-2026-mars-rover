@@ -56,6 +56,10 @@ export interface SimulationResult {
   battery: number[];
   steps_used: number;
   success: boolean;
+  all_collected?: boolean;
+  total_minerals?: number;
+  time_budget_steps?: number;
+  termination_reason?: string;
   start: [number, number];
   all_minerals: Record<string, string>;
   logs: SimLogEntry[];

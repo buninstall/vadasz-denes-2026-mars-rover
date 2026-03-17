@@ -14,18 +14,18 @@ const Controls: React.FC<ControlsProps> = ({ onStart, isLoading }) => {
         display: 'flex',
         alignItems: 'center',
         gap: 10,
-        background: 'rgba(10,3,1,0.88)',
-        border: '1px solid #7a3010',
+        background: 'rgba(2,6,14,0.68)',
+        border: '1px solid #374151',
         borderRadius: 8,
         padding: '10px 14px',
         fontFamily: 'monospace',
-        boxShadow: '0 4px 24px rgba(200,60,10,0.12)',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.25)',
         backdropFilter: 'blur(8px)',
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        <label style={{ color: '#7a3a18', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-          Időkeret (óra)
+        <label style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+          Minimum időkeret (óra)
         </label>
         <input
           type="number"
@@ -33,11 +33,11 @@ const Controls: React.FC<ControlsProps> = ({ onStart, isLoading }) => {
           value={hours}
           onChange={(e) => setHours(parseInt(e.target.value) || 24)}
           style={{
-            background: 'rgba(20,8,2,0.95)',
-            color: '#e86030',
+            background: 'rgba(3,7,18,0.9)',
+            color: '#f3f4f6',
             padding: '5px 10px',
             borderRadius: 5,
-            border: '1px solid #5a2008',
+            border: '1px solid #4b5563',
             outline: 'none',
             width: 72,
             fontSize: 16,
@@ -50,11 +50,9 @@ const Controls: React.FC<ControlsProps> = ({ onStart, isLoading }) => {
         disabled={isLoading}
         style={{
           padding: '9px 18px',
-          background: isLoading
-            ? 'rgba(90,32,8,0.5)'
-            : 'linear-gradient(135deg, #a83010, #c4501a)',
-          color: isLoading ? '#5a3020' : '#fff',
-          border: '1px solid #7a3010',
+          background: isLoading ? 'rgba(17,24,39,0.7)' : '#f3f4f6',
+          color: isLoading ? '#9ca3af' : '#030712',
+          border: '1px solid ' + (isLoading ? '#4b5563' : '#f3f4f6'),
           borderRadius: 6,
           fontSize: 11,
           fontWeight: 700,
@@ -62,12 +60,12 @@ const Controls: React.FC<ControlsProps> = ({ onStart, isLoading }) => {
           textTransform: 'uppercase',
           cursor: isLoading ? 'not-allowed' : 'pointer',
           fontFamily: 'monospace',
-          boxShadow: isLoading ? 'none' : '0 0 12px rgba(200,80,20,0.3)',
+          boxShadow: isLoading ? 'none' : '0 0 12px rgba(243,244,246,0.25)',
           transition: 'all 0.2s',
           whiteSpace: 'nowrap',
         }}
       >
-        {isLoading ? '⏳ Feldolgozás…' : '▶ Szimuláció Indítása'}
+        {isLoading ? 'Feldolgozás…' : 'Szimuláció indítása'}
       </button>
     </div>
   );

@@ -4,7 +4,7 @@ import os
 import random
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from infer import run_inference
 
 app = FastAPI()
@@ -86,7 +86,8 @@ def get_map(random_map: bool = True):
 
 class SimulationRequest(BaseModel):
     map_file: str
-    time_limit_hours: int = 24
+    time_limit_hours: int = Field(default=24, ge=24)
+    collect_all: bool = True
 
 @app.post("/simulate")
 def start_simulation(request: SimulationRequest):
@@ -100,7 +101,12 @@ def start_simulation(request: SimulationRequest):
         raise HTTPException(status_code=404, detail=f"Map file '{request.map_file}' not found")
         
     try:
-        result = run_inference(map_path, None, request.time_limit_hours)
+        result = run_inference(
+            map_path,
+            None,
+            request.time_limit_hours,
+            request.collect_all,
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

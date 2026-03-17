@@ -273,6 +273,11 @@ class RLAgent:
             home_remaining -= moved_blocks
             simulated_step += 1
 
+        if not self._is_day(simulated_step):
+            night_steps_left = CYCLE - (simulated_step % CYCLE)
+            if simulated_battery <= night_steps_left:
+                return None
+
         return {
             "to_target_steps": to_target_steps,
             "roundtrip_steps": simulated_step - step,
@@ -302,6 +307,7 @@ class RLAgent:
                 max(abs(self.m.start_pos[0] - mineral[0]), abs(self.m.start_pos[1] - mineral[1])),
             ),
         )[:MAX_TARGET_CANDIDATES]
+        ranked_candidate_set = set(ranked_candidates)
 
         best_target = None
         best_evaluation = None
@@ -324,6 +330,32 @@ class RLAgent:
                 best_target = mineral
                 best_evaluation = evaluation
                 best_score = score
+
+        if best_target is None and len(ranked_candidate_set) < len(current_mins):
+            fallback_candidates = sorted(
+                (mineral for mineral in current_mins if mineral not in ranked_candidate_set),
+                key=lambda mineral: (
+                    max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])),
+                    max(abs(self.m.start_pos[0] - mineral[0]), abs(self.m.start_pos[1] - mineral[1])),
+                ),
+            )
+
+            for mineral in fallback_candidates:
+                evaluation = self._evaluate_candidate(pos, mineral, battery, step, max_steps)
+                if evaluation is None:
+                    continue
+
+                cluster_bonus = min(density_map[mineral], 8)
+                score = (
+                    (1.0 + 0.35 * cluster_bonus) / max(1.0, evaluation["to_target_steps"])
+                    + 0.002 * evaluation["battery_after_return"]
+                    + 0.001 * max(0, time_left - evaluation["roundtrip_steps"])
+                )
+
+                if best_score is None or score > best_score:
+                    best_target = mineral
+                    best_evaluation = evaluation
+                    best_score = score
 
         if best_target is None:
             return None
