@@ -57,7 +57,9 @@ export interface SimulationResult {
   steps_used: number;
   success: boolean;
   all_collected?: boolean;
+  returned_home?: boolean;
   total_minerals?: number;
+  time_budget_hours?: number;
   time_budget_steps?: number;
   termination_reason?: string;
   start: [number, number];

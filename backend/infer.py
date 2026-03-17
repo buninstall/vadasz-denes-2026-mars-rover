@@ -4,7 +4,6 @@ an optimised sequence of (row, col) waypoints.
 
 Usage:
     python infer.py --map mars_maps/mars_map_00001.csv --brain rover_model.npy --hours 24
-    python infer.py --map mars_maps/mars_map_00001.csv --hours 24 --respect-time-limit
 """
 
 import argparse
@@ -31,16 +30,18 @@ def run_inference(
     Run a single requirements-aligned planning episode and return the full result.
 
     The route planner uses obstacle-aware A* paths plus a feasibility-aware
-    target selector. A mineral is only pursued if the rover can still mine it
-    and return to the start within the remaining time budget while respecting
-    battery drain, solar charging, and half-hour mining duration.
+    target selector. Unmined mineral tiles are treated as temporarily occupied
+    cells, then immediately become drivable after mining. A mineral is only
+    pursued if the rover can still mine it and return to the start within the
+    remaining time budget while respecting battery drain, solar charging, and
+    half-hour mining duration.
 
     Returns a dict with:
         path        – list of [row, col] coordinates visited each step
         minerals    – list of {pos, type, step} for each mineral collected
         battery     – list of battery level at each step
         steps_used  – total half-hour steps consumed
-        success     – True if every mineral was collected and the rover finished at start
+        success     – True if the rover finished back at start within the mission window
         logs        - detailed logs for each step
     """
     mission = MarsMission(map_file)
@@ -59,13 +60,15 @@ def run_inference(
     total_minerals = len(mission.minerals)
     termination_reason = "unknown"
 
-    agent._path_cache = []
-    agent._path_target = None
+    agent.reset_runtime_state(mins)
 
     # The PDF defines the input time in hours and movement/mining in 0.5h slots.
     effective_hours = max(MIN_TIME_LIMIT_HOURS, int(time_limit_hours))
     time_budget_steps = max(1, effective_hours * 2)
-    max_steps = MAX_STEPS if collect_all else min(MAX_STEPS, time_budget_steps)
+    # The competition rules define the hour input as the real mission horizon.
+    # `collect_all` is kept for API compatibility, but path planning always
+    # stays inside the requested timeframe.
+    max_steps = min(MAX_STEPS, time_budget_steps)
     active_target = None
 
     logs.append({
@@ -126,20 +129,19 @@ def run_inference(
             termination_reason = "completed"
             break
 
-        current_path = agent.get_path(pos, target)
-        home_path = agent.get_path(target, mission.start_pos) if target != mission.start_pos else []
+        current_path = agent.get_path(pos, target, passable_cells=(pos, target))
+        home_path = (
+            agent.get_path(
+                target,
+                mission.start_pos,
+                passable_cells=(target, mission.start_pos),
+            )
+            if target != mission.start_pos
+            else []
+        )
         reserve_blocks = len(current_path) + len(home_path)
         safe_speed = agent.pick_route_speed(reserve_blocks, battery, step)
-        retreating_home = (
-            target == mission.start_pos
-            and active_target is None
-            and bool(mins)
-            and pos != mission.start_pos
-        )
-        if retreating_home and safe_speed > 0:
-            dist_moved = min(len(current_path), 1)
-        else:
-            dist_moved = min(len(current_path), safe_speed)
+        dist_moved = min(len(current_path), safe_speed)
 
         if dist_moved <= 0:
             if agent._is_day(step) and battery < 100:
@@ -203,6 +205,7 @@ def run_inference(
             battery = agent._mine_battery(battery, step)
             min_type = mission.minerals[pos]
             mins.remove(pos)
+            agent.clear_mineral(pos)
             step += 1
             minerals_collected.append({
                 "pos": list(pos),
@@ -236,18 +239,22 @@ def run_inference(
             break
 
     if termination_reason == "unknown":
-        termination_reason = "max_steps_reached" if step >= max_steps else "ended"
+        termination_reason = "time_budget_reached" if step >= max_steps else "ended"
 
     all_collected = len(mins) == 0
+    returned_home = pos == mission.start_pos
+    mission_success = returned_home and battery > 0 and step <= max_steps
 
     return {
         "path": path,
         "minerals": minerals_collected,
         "battery": battery_log,
         "steps_used": step,
-        "success": (all_collected and pos == mission.start_pos and battery > 0),
+        "success": mission_success,
         "all_collected": all_collected,
+        "returned_home": returned_home,
         "total_minerals": total_minerals,
+        "time_budget_hours": effective_hours,
         "time_budget_steps": time_budget_steps,
         "termination_reason": termination_reason,
         "start": list(mission.start_pos),
@@ -277,7 +284,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--respect-time-limit",
         action="store_true",
-        help="Stop when the given hour budget is exhausted instead of collecting all minerals",
+        help="Deprecated compatibility flag; the mission always respects the given hour budget",
     )
     parser.add_argument("--json", action="store_true", help="Output result as JSON")
     args = parser.parse_args()

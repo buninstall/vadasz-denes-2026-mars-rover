@@ -1,6 +1,7 @@
 import csv
 import heapq
 import random
+from collections import deque
 
 try:
     import numpy as np
@@ -53,10 +54,30 @@ class RLAgent:
         self.lr = 0.1
         self.gamma = 0.95
         self.epsilon = 0.3  # Exploration rate
+        self._remaining_minerals = set(self.m.minerals.keys())
         # Path cache: reuse A* result while following the same target
         self._path_cache: list = []
         self._path_target = None
-        self._pair_path_cache: dict[tuple[tuple[int, int], tuple[int, int]], list[tuple[int, int]]] = {}
+        self._pair_path_cache: dict[
+            tuple[tuple[int, int], tuple[int, int], tuple[tuple[int, int], ...]],
+            list[tuple[int, int]],
+        ] = {}
+
+    def _invalidate_route_cache(self):
+        self._path_cache = []
+        self._path_target = None
+        self._pair_path_cache = {}
+
+    def reset_runtime_state(self, remaining_minerals=None):
+        self._remaining_minerals = set(
+            self.m.minerals.keys() if remaining_minerals is None else remaining_minerals
+        )
+        self._invalidate_route_cache()
+
+    def clear_mineral(self, mineral):
+        if mineral in self._remaining_minerals:
+            self._remaining_minerals.remove(mineral)
+            self._invalidate_route_cache()
 
     def _is_day(self, step: int) -> bool:
         return (step % CYCLE) < DAY_STEPS
@@ -148,8 +169,22 @@ class RLAgent:
 
         return (d_bin, b_bin, is_day)
 
-    def _compute_path(self, start, target):
-        """A* returning the full path from start to target (start excluded, target included)."""
+    def _normalise_passable_cells(self, start, target, passable_cells=None):
+        cells = {start, target}
+        if passable_cells:
+            cells.update(passable_cells)
+        return tuple(sorted(cells))
+
+    def _compute_path(self, start, target, passable_cells=()):
+        """
+        A* returning the full path from start to target (start excluded, target included).
+
+        Mineral tiles that have not been mined yet are treated as temporarily occupied,
+        except for the explicitly passable cells (for example the current target).
+        Once a mineral is mined, `clear_mineral()` removes it from the blocked set so
+        later paths can immediately cut through the opened corridor.
+        """
+        passable = set(passable_cells)
         queue = [(0, start)]
         came_from = {start: None}
         cost = {start: 0}
@@ -169,6 +204,7 @@ class RLAgent:
                     0 <= nxt[0] < GRID_SIZE
                     and 0 <= nxt[1] < GRID_SIZE
                     and nxt not in self.m.obstacles
+                    and (nxt not in self._remaining_minerals or nxt in passable)
                 ):
                     new_cost = cost[curr] + 1
                     if nxt not in cost or new_cost < cost[nxt]:
@@ -187,18 +223,71 @@ class RLAgent:
         path.reverse()
         return path
 
-    def get_path(self, start, target):
+    def get_path(self, start, target, passable_cells=None):
         if start == target:
             return []
 
-        key = (start, target)
+        passable_signature = self._normalise_passable_cells(start, target, passable_cells)
+        key = (start, target, passable_signature)
         cached = self._pair_path_cache.get(key)
         if cached is not None:
             return cached
 
-        path = self._compute_path(start, target)
+        path = self._compute_path(start, target, passable_signature)
         self._pair_path_cache[key] = path
         return path
+
+    def _is_frontier_mineral(self, mineral, current_mins):
+        exposure = 0
+
+        for dr, dc in [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),           (0, 1),
+            (1, -1),  (1, 0),  (1, 1),
+        ]:
+            nxt = (mineral[0] + dr, mineral[1] + dc)
+            if not (0 <= nxt[0] < GRID_SIZE and 0 <= nxt[1] < GRID_SIZE):
+                continue
+            if nxt in self.m.obstacles:
+                continue
+            if nxt not in current_mins:
+                exposure += 1
+
+        return exposure
+
+    def _cluster_maps(self, current_mins):
+        remaining = set(current_mins)
+        cluster_size = {}
+        cluster_frontier = {}
+
+        while remaining:
+            seed = remaining.pop()
+            queue = deque([seed])
+            cluster = [seed]
+
+            while queue:
+                curr = queue.popleft()
+                for dr, dc in [
+                    (-1, -1), (-1, 0), (-1, 1),
+                    (0, -1),           (0, 1),
+                    (1, -1),  (1, 0),  (1, 1),
+                ]:
+                    nxt = (curr[0] + dr, curr[1] + dc)
+                    if nxt in remaining:
+                        remaining.remove(nxt)
+                        queue.append(nxt)
+                        cluster.append(nxt)
+
+            size = len(cluster)
+            frontier_count = sum(
+                1 for mineral in cluster if self._is_frontier_mineral(mineral, current_mins) > 0
+            )
+
+            for mineral in cluster:
+                cluster_size[mineral] = size
+                cluster_frontier[mineral] = frontier_count
+
+        return cluster_size, cluster_frontier
 
     def _candidate_density_map(self, current_mins):
         density = {}
@@ -212,11 +301,15 @@ class RLAgent:
         return density
 
     def _evaluate_candidate(self, pos, target, battery, step, max_steps):
-        outbound_path = self.get_path(pos, target)
+        outbound_path = self.get_path(pos, target, passable_cells=(pos, target))
         if pos != target and not outbound_path:
             return None
 
-        return_path = self.get_path(target, self.m.start_pos)
+        return_path = self.get_path(
+            target,
+            self.m.start_pos,
+            passable_cells=(target, self.m.start_pos),
+        )
         if target != self.m.start_pos and target != pos and not return_path:
             return None
 
@@ -300,13 +393,43 @@ class RLAgent:
             return None
 
         density_map = self._candidate_density_map(current_mins)
+        cluster_size_map, cluster_frontier_map = self._cluster_maps(current_mins)
+        frontier_exposure_map = {
+            mineral: self._is_frontier_mineral(mineral, current_mins)
+            for mineral in current_mins
+        }
+        adjacent_candidates = [
+            mineral
+            for mineral in current_mins
+            if max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])) <= 1
+        ]
+        frontier_candidates = [
+            mineral for mineral in current_mins if frontier_exposure_map[mineral] > 0
+        ]
+        candidate_pool = frontier_candidates or list(current_mins)
+
         ranked_candidates = sorted(
-            current_mins,
+            candidate_pool,
             key=lambda mineral: (
-                max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])) - 0.75 * min(density_map[mineral], 6),
+                max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1]))
+                - 0.85 * min(density_map[mineral], 6)
+                - 0.35 * min(cluster_size_map[mineral] - 1, 14)
+                - 0.25 * min(frontier_exposure_map[mineral], 4),
                 max(abs(self.m.start_pos[0] - mineral[0]), abs(self.m.start_pos[1] - mineral[1])),
             ),
         )[:MAX_TARGET_CANDIDATES]
+        if adjacent_candidates:
+            ranked_candidates = list(
+                dict.fromkeys(
+                    sorted(
+                        adjacent_candidates,
+                        key=lambda mineral: (
+                            max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])),
+                            -cluster_size_map[mineral],
+                        ),
+                    ) + ranked_candidates
+                )
+            )[:MAX_TARGET_CANDIDATES]
         ranked_candidate_set = set(ranked_candidates)
 
         best_target = None
@@ -319,9 +442,23 @@ class RLAgent:
             if evaluation is None:
                 continue
 
-            cluster_bonus = min(density_map[mineral], 8)
+            density_bonus = min(density_map[mineral], 8)
+            cluster_bonus = min(cluster_size_map[mineral] - 1, 14)
+            frontier_bonus = min(frontier_exposure_map[mineral], 5)
+            cluster_frontier_bonus = min(cluster_frontier_map[mineral], 10)
+            continuation_bonus = (
+                0.35 if max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])) <= 1 else 0.0
+            )
             score = (
-                (1.0 + 0.35 * cluster_bonus) / max(1.0, evaluation["to_target_steps"])
+                (
+                    1.0
+                    + 0.28 * density_bonus
+                    + 0.06 * cluster_bonus
+                    + 0.05 * frontier_bonus
+                    + 0.02 * cluster_frontier_bonus
+                    + continuation_bonus
+                )
+                / max(1.0, evaluation["to_target_steps"])
                 + 0.002 * evaluation["battery_after_return"]
                 + 0.001 * max(0, time_left - evaluation["roundtrip_steps"])
             )
@@ -345,9 +482,23 @@ class RLAgent:
                 if evaluation is None:
                     continue
 
-                cluster_bonus = min(density_map[mineral], 8)
+                density_bonus = min(density_map[mineral], 8)
+                cluster_bonus = min(cluster_size_map[mineral] - 1, 14)
+                frontier_bonus = min(frontier_exposure_map[mineral], 5)
+                cluster_frontier_bonus = min(cluster_frontier_map[mineral], 10)
+                continuation_bonus = (
+                    0.35 if max(abs(pos[0] - mineral[0]), abs(pos[1] - mineral[1])) <= 1 else 0.0
+                )
                 score = (
-                    (1.0 + 0.35 * cluster_bonus) / max(1.0, evaluation["to_target_steps"])
+                    (
+                        1.0
+                        + 0.28 * density_bonus
+                        + 0.06 * cluster_bonus
+                        + 0.05 * frontier_bonus
+                        + 0.02 * cluster_frontier_bonus
+                        + continuation_bonus
+                    )
+                    / max(1.0, evaluation["to_target_steps"])
                     + 0.002 * evaluation["battery_after_return"]
                     + 0.001 * max(0, time_left - evaluation["roundtrip_steps"])
                 )
@@ -369,7 +520,7 @@ class RLAgent:
 
         # Only recompute when the destination has changed or the cache is exhausted
         if target != self._path_target or not self._path_cache:
-            self._path_cache = self.get_path(start, target)
+            self._path_cache = self.get_path(start, target, passable_cells=(start, target))
             self._path_target = target
 
         if not self._path_cache:
@@ -399,9 +550,7 @@ class RLAgent:
             battery = 100.0
             mins = set(self.m.minerals.keys())
             step = 0
-            # Reset path cache so stale paths from previous episodes / maps are discarded
-            self._path_cache = []
-            self._path_target = None
+            self.reset_runtime_state(mins)
 
             while step < self.MAX_TRAIN_STEPS:
                 s_idx = self.get_state_index(pos, battery, step, mins)
@@ -413,13 +562,17 @@ class RLAgent:
                     action = int(np.argmax(self.q_table[s_idx]))
 
                 # Direction: go to nearest mineral or head home
-                target = (
-                    self.m.start_pos
-                    if (action == 1 or not mins)
-                    else min(
-                        mins, key=lambda m: max(abs(pos[0] - m[0]), abs(pos[1] - m[1]))
+                if action == 1 or not mins:
+                    target = self.m.start_pos
+                else:
+                    selection = self.choose_next_target(
+                        pos,
+                        battery,
+                        step,
+                        mins,
+                        self.MAX_TRAIN_STEPS,
                     )
-                )
+                    target = selection[0] if selection is not None else self.m.start_pos
                 # Speed: fastest that still leaves enough energy to get home
                 speed_choice = self._pick_speed(pos, battery, step)
 
@@ -445,6 +598,7 @@ class RLAgent:
                     mining_charge = 10 if (step % CYCLE) < DAY_STEPS else 0
                     battery = max(0.0, min(100.0, battery - 2 + mining_charge))
                     mins.remove(new_pos)
+                    self.clear_mineral(new_pos)
                     reward += 100  # Huge reward for collecting
 
                 # Failure condition — update Q-table before terminating

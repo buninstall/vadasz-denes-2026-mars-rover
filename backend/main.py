@@ -94,7 +94,7 @@ def get_map(random_map: bool = True):
 class SimulationRequest(BaseModel):
     map_file: str
     time_limit_hours: int = Field(default=24, ge=24)
-    collect_all: bool = True
+    collect_all: bool = False
 
 @app.post("/simulate")
 def start_simulation(request: SimulationRequest):

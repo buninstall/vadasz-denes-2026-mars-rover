@@ -37,7 +37,7 @@ export const simulationApi = {
     const response = await api.post('/simulate', {
       map_file: 'mars_map_50x50.csv',
       time_limit_hours: hours,
-      collect_all: true,
+      collect_all: false,
     });
     return response.data;
   },
