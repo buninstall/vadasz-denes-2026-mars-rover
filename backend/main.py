@@ -99,12 +99,8 @@ def start_simulation(request: SimulationRequest):
     if not os.path.exists(map_path):
         raise HTTPException(status_code=404, detail=f"Map file '{request.map_file}' not found")
         
-    brain_file = "rover_model.npy"
-    if not os.path.exists(brain_file):
-        raise HTTPException(status_code=404, detail=f"Brain file '{brain_file}' not found")
-        
     try:
-        result = run_inference(map_path, brain_file, request.time_limit_hours)
+        result = run_inference(map_path, None, request.time_limit_hours)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
