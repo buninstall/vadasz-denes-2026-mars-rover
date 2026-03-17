@@ -4,7 +4,7 @@ import os
 import random
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from infer import run_inference
 
 app = FastAPI()
@@ -18,8 +18,11 @@ app.add_middleware(
 )
 
 # Configuration
-MAPS_DIR = "mars_maps"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MAPS_DIR = os.path.join(BASE_DIR, "mars_maps")
 DEFAULT_MAP = "mars_map_50x50.csv"
+DEFAULT_MAP_PATH = os.path.join(BASE_DIR, DEFAULT_MAP)
+BRAIN_FILE = os.path.join(BASE_DIR, "rover_model.npy")
 
 
 class ConnectionManager:
@@ -47,7 +50,10 @@ def load_map_from_csv(file_path: str):
     grid = []
     try:
         with open(file_path, "r") as f:
-            reader = csv.reader(f, skipinitialspace=True)
+            content = f.read()
+            delimiter = ";" if ";" in content else ","
+            f.seek(0)
+            reader = csv.reader(f, delimiter=delimiter, skipinitialspace=True)
             for row in reader:
                 clean_row = [cell.strip() for cell in row if cell.strip()]
                 if clean_row:
@@ -58,8 +64,8 @@ def load_map_from_csv(file_path: str):
 
 
 @app.get("/map")
-def get_map(random_map: bool = True):
-    target_file = DEFAULT_MAP
+def get_map(random_map: bool = False):
+    target_file = DEFAULT_MAP_PATH
 
     if random_map:
         if os.path.exists(MAPS_DIR) and os.path.isdir(MAPS_DIR):
@@ -86,20 +92,22 @@ def get_map(random_map: bool = True):
 
 class SimulationRequest(BaseModel):
     map_file: str
-    time_limit_hours: int = 24
+    time_limit_hours: int = Field(default=24, ge=24)
 
 @app.post("/simulate")
 def start_simulation(request: SimulationRequest):
     # Resolve map file path
-    if request.map_file == DEFAULT_MAP:
+    if os.path.isabs(request.map_file):
         map_path = request.map_file
+    elif request.map_file == DEFAULT_MAP:
+        map_path = DEFAULT_MAP_PATH
     else:
         map_path = os.path.join(MAPS_DIR, request.map_file)
         
     if not os.path.exists(map_path):
         raise HTTPException(status_code=404, detail=f"Map file '{request.map_file}' not found")
         
-    brain_file = "rover_model.npy"
+    brain_file = BRAIN_FILE
     if not os.path.exists(brain_file):
         raise HTTPException(status_code=404, detail=f"Brain file '{brain_file}' not found")
         

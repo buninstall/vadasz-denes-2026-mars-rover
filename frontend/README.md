@@ -1,4 +1,4 @@
-# Mars Rover — Frontend
+w# Mars Rover — Frontend
 
 Vite + React + Tailwind alapprojekt.
 

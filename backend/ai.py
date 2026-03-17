@@ -2,6 +2,7 @@ import numpy as np
 import heapq
 import csv
 import random
+from typing import Optional
 
 # --- CONSTANTS FROM TASK ---
 GRID_SIZE = 50
@@ -50,32 +51,100 @@ class RLAgent:
         # Path cache: reuse A* result while following the same target
         self._path_cache: list = []
         self._path_target = None
+        self._home_distance_cache: dict = {}
+
+    @staticmethod
+    def _is_day(step: int) -> bool:
+        return (step % CYCLE) < DAY_STEPS
+
+    @staticmethod
+    def _clamp_battery(battery: float) -> float:
+        return max(0.0, min(100.0, battery))
+
+    def _apply_energy_slot(
+        self,
+        battery: float,
+        step: int,
+        consumption: float,
+    ) -> Optional[float]:
+        """
+        Apply one half-hour energy slot.
+
+        Returns:
+            - next battery if the slot is feasible
+            - None if battery would go below 0 (invalid action)
+        """
+        solar_charge = 10 if self._is_day(step) else 0
+        next_battery = battery - consumption + solar_charge
+        if next_battery < 0:
+            return None
+        return self._clamp_battery(next_battery)
+
+    def _estimate_blocks_to_home(self, pos) -> Optional[int]:
+        if pos in self._home_distance_cache:
+            return self._home_distance_cache[pos]
+
+        if pos == self.m.start_pos:
+            self._home_distance_cache[pos] = 0
+            return 0
+
+        path = self._compute_path(pos, self.m.start_pos)
+        blocks = len(path) if path and path[-1] == self.m.start_pos else None
+        self._home_distance_cache[pos] = blocks
+        return blocks
+
+    def _simulate_travel(
+        self,
+        battery: float,
+        step: int,
+        blocks: int,
+        speed: int,
+    ) -> Optional[tuple[float, int]]:
+        """Simulate movement for `blocks` map-steps at fixed speed. Returns (battery, next_step) or None if infeasible."""
+        if blocks <= 0:
+            return self._clamp_battery(battery), step
+        if speed <= 0:
+            return None
+
+        sim_battery = battery
+        sim_step = step
+        remaining = blocks
+
+        while remaining > 0:
+            moved = min(speed, remaining)
+            remaining -= moved
+            consumption = K_CONSTANT * (moved ** 2)
+            next_battery = self._apply_energy_slot(sim_battery, sim_step, consumption)
+            if next_battery is None:
+                return None
+            sim_battery = next_battery
+            sim_step += 1
+
+        return sim_battery, sim_step
+
+    def _can_travel_blocks(self, battery: float, step: int, blocks: int, speed: int) -> bool:
+        return self._simulate_travel(battery, step, blocks, speed) is not None
 
     def _pick_speed(self, pos, battery, step) -> int:
         """
-        Choose the fastest speed that leaves enough energy to return home.
+        Pick the fastest feasible speed while preserving a feasible return-to-home plan.
 
-        Cost to return home at speed v (Chebyshev steps = ceil(dist/v)):
-            E_return = k * v^2 * ceil(dist/v) - solar_return
-        We keep a safety margin and pick the highest v (1, 2, 3) such that
-        battery - movement_cost_now - E_return_v >= SAFETY.
-        Falls back to speed 1 if even that is tight.
+        Rules enforced:
+        - One slot action must be energetically feasible (battery cannot go below 0)
+        - After this slot, returning home at the same speed must still be feasible
         """
-        SAFETY = 5  # keep at least this much battery after returning home
-        dist_home = max(abs(pos[0] - self.m.start_pos[0]), abs(pos[1] - self.m.start_pos[1]))
-        is_day = (step % CYCLE) < DAY_STEPS
-        solar_per_step = 10 if is_day else 0
+        blocks_home = self._estimate_blocks_to_home(pos)
+        if blocks_home is None:
+            return 1
 
         for v in (3, 2, 1):
-            move_cost = K_CONSTANT * v ** 2       # cost of this step at speed v
-            if dist_home == 0:
-                return v                           # already home, any speed fine
-            steps_home = -(-dist_home // v)       # ceil(dist/v)
-            # Net cost to get home: consumption minus solar earned en route
-            net_return = max(0, K_CONSTANT * v ** 2 * steps_home - solar_per_step * steps_home)
-            if battery - move_cost - net_return >= SAFETY:
+            move_cost = K_CONSTANT * (v ** 2)
+            battery_after_slot = self._apply_energy_slot(battery, step, move_cost)
+            if battery_after_slot is None:
+                continue
+            if self._can_travel_blocks(battery_after_slot, step + 1, blocks_home, v):
                 return v
-        return 1  # always safe fallback
+        return 1
 
     def get_state_index(self, pos, battery, step, current_mins):
         # 1. Distance to nearest objective

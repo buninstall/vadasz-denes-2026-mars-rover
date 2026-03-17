@@ -28,6 +28,7 @@ def _worker(args: tuple) -> np.ndarray:
     for map_path, epsilon in zip(map_chunk, epsilons):
         agent.epsilon = epsilon
         agent.m = MarsMission(map_path)
+        agent._home_distance_cache = {}
         agent.train(episodes=EPISODES_PER_MAP)
 
     return agent.q_table.ravel()  # flatten for safe pickling
