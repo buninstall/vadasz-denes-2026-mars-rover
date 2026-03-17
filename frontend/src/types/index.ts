@@ -2,9 +2,6 @@ export type BlockType = '.' | '#' | 'B' | 'Y' | 'G' | 'S';
 
 export interface MapData {
   grid: BlockType[][];
-  filename?: string;
-  width?: number;
-  height?: number;
 }
 
 export interface RoverState {
@@ -66,6 +63,14 @@ export interface SimulationResult {
   start: [number, number];
   all_minerals: Record<string, string>;
   logs: SimLogEntry[];
+}
+
+export interface ReplayEntry {
+  id: string;
+  createdAt: string;
+  hours: number;
+  mapGrid: BlockType[][];
+  result: SimulationResult;
 }
 
 // Full path from backend: array of [row, col] points

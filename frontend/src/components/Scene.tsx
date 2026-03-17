@@ -17,7 +17,7 @@ interface SceneProps {
   map: MapData;
   simulationResult: SimulationResult | null;
   isPlaying: boolean;
-  stepDurationSec?: number; // base seconds per sim-step (default 0.06)
+  stepDurationSec?: number;
   onStep?: (step: number) => void;
   onComplete?: () => void;
 }
@@ -25,18 +25,28 @@ interface SceneProps {
 // ==== SETTINGS ====
 const ROVER_GROUND_CLEARANCE = 0.04;
 const ROVER_SCALE = 0.7;
-const OBSTACLE_HEIGHT_OFFSET = -1.2;  // deeply embed model origin into terrain
+const OBSTACLE_HEIGHT_OFFSET = -1.2;
 const OBSTACLE_SCALE = 4.5;
 const OBSTACLE_RANDOM_OFFSET = 0.5;
-const MINERAL_EMBED_DEPTH = 0.03;
+const MINERAL_GROUND_CLEARANCE = 0.02;
+const GOLD_GROUND_CLEARANCE = 0.04;
 const MINERAL_SCALE = 0.15;
 const GOLD_SCALE = 5;
+const MINERAL_RANDOM_OFFSET = 0.6;
 const RENDER_DISTANCE = 1500;
+const TERRAIN_SIZE = 2000;
+const TERRAIN_SEGMENTS = 400;
+const ARRIVAL_THRESHOLD = 1.2;
 // ==================
 
 const GRID_SIZE = 50;
 const CELL_SIZE = 2;
 const OFFSET = (GRID_SIZE * CELL_SIZE) / 2;
+
+// The play area edge in world coords
+const PLAY_EDGE = OFFSET; // 50
+const RIM_WIDTH = 12;     // width of the crater rim ring
+const RIM_HEIGHT = 5;     // how high the rim rises
 
 const seededRandom = (x: number, y: number): number => {
   const seed = x * 73856093 ^ y * 19349663;
@@ -62,21 +72,58 @@ const getRandomRotation = (x: number, y: number): number => {
   return rand * Math.PI * 2;
 };
 
+const terrainJitter = (wx: number, wz: number): number => {
+  const qx = Math.floor((wx + 4000) * 2);
+  const qz = Math.floor((wz + 4000) * 2);
+  return (seededRandom(qx, qz) - 0.5) * 0.24;
+};
+
 /**
- * Analytical terrain height at world (wx, wz).
- * Matches MarsSurface geometry generation — no raycasting needed.
+ * Smooth ease-in-out: t in [0,1] -> [0,1]
+ */
+const smoothstep = (t: number): number => t * t * (3 - 2 * t);
+
+/**
+ * Terrain height at world (wx, wz).
+ *
+ * Design:
+ *  - Inside the 50×50 play area: essentially flat (height ≈ 0)
+ *  - Crater rim ring: smooth rise up to RIM_HEIGHT
+ *  - Outside rim: Mars terrain with rolling hills + macro hills
  */
 const estimateTerrainHeight = (wx: number, wz: number): number => {
+  // Distance from play-area edge (0 inside, positive outside)
+  const dE = Math.max(Math.abs(wx) - PLAY_EDGE, Math.abs(wz) - PLAY_EDGE, 0);
+
+  // Inside the play area — flat with very subtle micro-variation
+  if (dE <= 0) {
+    return terrainJitter(wx, wz) * 0.12;
+  }
+
+  // Crater rim profile: rises up then descends into outer terrain
+  const rimT = Math.min(dE / RIM_WIDTH, 1);
+  const rimProfile = Math.sin(rimT * Math.PI) * RIM_HEIGHT; // bell curve: 0 → peak → 0
+
+  // Outer terrain: multi-octave sine hills (only active beyond rim)
+  const outerT = Math.max(0, (dE - RIM_WIDTH * 0.3) / (RIM_WIDTH * 0.7)); // ramp from 0 at 30% into rim
+  const outerBlend = Math.min(outerT, 1);
+
   const x = wx, y = wz;
-  const noise =
-    Math.sin(x * 0.05) * Math.cos(y * 0.05) * 2 +
-    Math.sin(x * 0.1)  * Math.cos(y * 0.1)  * 1 +
-    Math.sin(x * 0.2)  * Math.cos(y * 0.2)  * 0.5 + 0.15; // +0.15 ≈ E[random()*0.3]
-  const dist = Math.sqrt(x * x + y * y);
-  const macroHills = dist > 100 ? Math.sin(x * 0.01) * Math.cos(y * 0.01) * (dist / 10) : 0;
-  const dE = Math.max(Math.max(0, Math.abs(x) - 50), Math.max(0, Math.abs(y) - 50));
-  const boundary = dE > 0 ? (() => { const t = Math.min(dE / 5, 1); return (t < 0.5 ? 2*t*t : -1+(4-2*t)*t) * 3; })() : 0;
-  return noise + macroHills + boundary - 0.1;
+  const hills =
+    Math.sin(x * 0.012 + 0.3) * Math.cos(y * 0.015 + 0.7) * 5.0 +
+    Math.sin(x * 0.022 - 1.2) * Math.cos(y * 0.018 + 2.1) * 3.0 +
+    Math.sin(x * 0.04 + 0.8) * Math.cos(y * 0.03 - 0.5) * 1.5 +
+    Math.sin(x * 0.08) * Math.cos(y * 0.07 + 1.0) * 0.5 +
+    terrainJitter(wx, wz);
+
+  // Macro hills grow with distance for epic far-away mountains
+  const dist = Math.sqrt(wx * wx + wz * wz);
+  const macroHills = dist > 120 ? Math.sin(x * 0.008) * Math.cos(y * 0.009) * (dist / 15) : 0;
+
+  // Base elevation so outer terrain sits at rim-height level
+  const outerBase = RIM_HEIGHT * 0.15;
+
+  return rimProfile + outerBlend * (hills + macroHills + outerBase);
 };
 
 /** Extract first mesh geometry+material from a GLTF scene. */
@@ -99,7 +146,8 @@ function getModelGroundOffset(scene: THREE.Group, cacheKey: string, scale: numbe
   if (cached !== undefined) return cached;
 
   const box = new THREE.Box3().setFromObject(scene);
-  const offset = Number.isFinite(box.min.y) ? -box.min.y * scale : 0;
+  const rawOffset = Number.isFinite(box.min.y) ? -box.min.y * scale : 0;
+  const offset = Math.max(0, rawOffset);
   MODEL_GROUND_OFFSET_CACHE.set(key, offset);
   return offset;
 }
@@ -157,10 +205,10 @@ const SceneryInstanced = React.memo(() => {
       const i = idx++;
       const x = (seededRandom(i * 3, 7) - 0.5) * 1200;
       const z = (seededRandom(i * 3 + 1, 13) - 0.5) * 1200;
-      if (Math.abs(x) < 65 && Math.abs(z) < 65) continue;
+      // Only place scenery rocks OUTSIDE the play area
+      if (Math.abs(x) < PLAY_EDGE + 5 && Math.abs(z) < PLAY_EDGE + 5) continue;
       const dist = Math.sqrt(x * x + z * z);
       const sc = (seededRandom(i * 3 + 2, 19) * 30 + 10) * (dist > 200 ? dist / 100 : 1);
-      // Embed proportionally: larger rocks are buried deeper so they look rooted
       const embedDepth = Math.max(1, sc * 0.08);
       dummy.position.set(x, estimateTerrainHeight(x, z) - embedDepth, z);
       dummy.rotation.set(0, seededRandom(i, 5) * Math.PI * 2, 0);
@@ -184,11 +232,12 @@ const SceneryInstanced = React.memo(() => {
   );
 });
 
-// ── Rover: no raycasting — uses precomputed terrain heights per path step
-const Rover = React.memo(({ pathPoints, stepRef, isMiningRef }: {
+// ── Rover
+const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef }: {
   pathPoints: THREE.Vector3[];
   stepRef: React.MutableRefObject<number>;
   isMiningRef: React.MutableRefObject<boolean>;
+  roverPosRef: React.MutableRefObject<THREE.Vector3>;
 }) => {
   const { scene } = useGLTF('/models/Rover.glb');
   const roverRef = useRef<THREE.Group>(null);
@@ -225,8 +274,8 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef }: {
     velocity.z *= horizontalDamping;
 
     const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
-    if (horizontalSpeed > 16) {
-      const scale = 16 / horizontalSpeed;
+    if (horizontalSpeed > 14) {
+      const scale = 14 / horizontalSpeed;
       velocity.x *= scale;
       velocity.z *= scale;
     }
@@ -235,15 +284,18 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef }: {
     position.z += velocity.z * delta;
 
     const desiredY = estimateTerrainHeight(position.x, position.z) + groundOffset + ROVER_GROUND_CLEARANCE;
-    velocity.y += (desiredY - position.y) * 45 * delta;
+    velocity.y += (desiredY - position.y) * 50 * delta;
     velocity.y -= 7.5 * delta;
-    velocity.y *= Math.exp(-7 * delta);
+    velocity.y *= Math.exp(-7.5 * delta);
     position.y += velocity.y * delta;
 
     if (position.y < desiredY) {
       position.y = desiredY;
       if (velocity.y < 0) velocity.y = 0;
     }
+
+    // Update shared rover position ref for sync
+    roverPosRef.current.copy(position);
 
     if (horizontalSpeed > 0.05) {
       headingRef.current.set(velocity.x, velocity.z).normalize();
@@ -258,7 +310,7 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef }: {
     const dirZ = headingRef.current.y;
     const rightX = dirZ;
     const rightZ = -dirX;
-    const sample = 0.9;
+    const sample = 1.0;
 
     const hFront = estimateTerrainHeight(position.x + dirX * sample, position.z + dirZ * sample);
     const hBack = estimateTerrainHeight(position.x - dirX * sample, position.z - dirZ * sample);
@@ -330,7 +382,7 @@ const ObstaclesInstanced = React.memo(({ map }: { map: MapData }) => {
   );
 });
 
-// ── Individual mineral with React.memo: only re-renders when collected changes
+// ── Individual mineral
 const Mineral = React.memo(({ position, type, rotation, collected }: {
   position: [number, number, number];
   type: 'Y' | 'B' | 'G';
@@ -346,15 +398,13 @@ const Mineral = React.memo(({ position, type, rotation, collected }: {
     [scene, modelPath, scale],
   );
   const yPos = useMemo(
-    () => estimateTerrainHeight(position[0], position[2]) + groundOffset - MINERAL_EMBED_DEPTH,
-    [position, groundOffset],
+    () => estimateTerrainHeight(position[0], position[2]) + groundOffset + (type === 'Y' ? GOLD_GROUND_CLEARANCE : MINERAL_GROUND_CLEARANCE),
+    [position, groundOffset, type],
   );
-  // Use separate ref to track collected to avoid stale closure in useFrame
   const collectedRef = useRef(collected);
   useEffect(() => { collectedRef.current = collected; }, [collected]);
   const scaleRef = useRef(1);
 
-  // Emissive materials so crystals glow and are visible at night
   const inject = useMemo(() => {
     if (type === 'B') return (
       <meshStandardMaterial
@@ -374,11 +424,9 @@ const Mineral = React.memo(({ position, type, rotation, collected }: {
         metalness={0.1}
       />
     );
-    // Gold ore uses its own GLTF material — add emissive via traversal effect below
     return undefined;
   }, [type]);
 
-  // Make gold ore emissive so it's visible at night
   const cloneRef = useRef<THREE.Group>(null);
   useEffect(() => {
     if (type !== 'Y' || !cloneRef.current) return;
@@ -397,21 +445,20 @@ const Mineral = React.memo(({ position, type, rotation, collected }: {
   useFrame((_, delta) => {
     if (!mineralRef.current) return;
     scaleRef.current = collectedRef.current
-      ? Math.max(0, scaleRef.current - delta * 6)   // shrink to 0 in ~0.17s
+      ? Math.max(0, scaleRef.current - delta * 6)
       : Math.min(1, scaleRef.current + delta * 4);
     mineralRef.current.scale.setScalar(scale * scaleRef.current);
-    // Hide completely once fully shrunk (avoids z-fighting at scale≈0)
     mineralRef.current.visible = scaleRef.current > 0.01;
   });
 
   return (
-    <group ref={mineralRef} position={[position[0], yPos, position[2]]} rotation={[0, rotation, 0]} scale={scale}>
+    <group ref={mineralRef} position={[position[0], yPos, position[2]]} rotation={[0, rotation, 0]}>
       <Clone ref={cloneRef} object={scene} scale={1} castShadow receiveShadow inject={inject} />
     </group>
   );
 }, (prev, next) => prev.collected === next.collected);
 
-// ── Minerals isolated in their own component: only re-renders when collectedStep changes
+// ── Minerals
 const MapMinerals = React.memo(({ map, mineralCollectionMap, collectedStep }: {
   map: MapData;
   mineralCollectionMap: Map<string, number>;
@@ -422,10 +469,11 @@ const MapMinerals = React.memo(({ map, mineralCollectionMap, collectedStep }: {
       row.map((cell, x) => {
         if (cell !== 'Y' && cell !== 'B' && cell !== 'G') return null;
         const collectedAt = mineralCollectionMap.get(`${y}_${x}`);
+        const [rx, , rz] = getRandomizedPosition(x, y, MINERAL_RANDOM_OFFSET);
         return (
           <Mineral
             key={`min-${x}-${y}`}
-            position={getPosition(x, y)}
+            position={[rx, 0, rz]}
             type={cell as 'Y' | 'B' | 'G'}
             rotation={getRandomRotation(x, y)}
             collected={collectedAt !== undefined && collectedAt <= collectedStep}
@@ -436,7 +484,7 @@ const MapMinerals = React.memo(({ map, mineralCollectionMap, collectedStep }: {
   </>
 ));
 
-// Terrain: 64×64 segments = 16× fewer triangles vs 256×256 → much faster raycasts and init
+// ── Mars terrain mesh with vertex colours
 const MarsSurface = React.memo(() => {
   const meshRef = useRef<THREE.Mesh>(null);
 
@@ -444,17 +492,76 @@ const MarsSurface = React.memo(() => {
     if (!meshRef.current) return;
     const geometry = meshRef.current.geometry as THREE.PlaneGeometry;
     const pos = geometry.attributes.position;
+
+    const heights: number[] = new Array(pos.count);
     for (let i = 0; i < pos.count; i++) {
-      pos.setZ(i, estimateTerrainHeight(pos.getX(i), pos.getY(i)));
+      const h = estimateTerrainHeight(pos.getX(i), pos.getY(i));
+      pos.setZ(i, h);
+      heights[i] = h;
     }
     pos.needsUpdate = true;
     geometry.computeVertexNormals();
+
+    // Find height range (loop to avoid stack overflow with spread)
+    let minH = Infinity, maxH = -Infinity;
+    for (let i = 0; i < heights.length; i++) {
+      if (heights[i] < minH) minH = heights[i];
+      if (heights[i] > maxH) maxH = heights[i];
+    }
+    const range = maxH - minH || 1;
+    const colors = new Float32Array(pos.count * 3);
+
+    // Mars palette
+    const playColor = new THREE.Color('#8b5e3c');   // warm brown for flat play area
+    const rimColor = new THREE.Color('#C9704A');     // orange-red rim
+    const valleyColor = new THREE.Color('#6B3A2A');  // dark rust
+    const midColor = new THREE.Color('#A0522D');     // sienna
+    const peakColor = new THREE.Color('#C97B4B');    // sandy orange
+    const tmpColor = new THREE.Color();
+
+    for (let i = 0; i < pos.count; i++) {
+      const vx = pos.getX(i);
+      const vy = pos.getY(i);
+      const dE = Math.max(Math.abs(vx) - PLAY_EDGE, Math.abs(vy) - PLAY_EDGE, 0);
+
+      if (dE <= 0) {
+        // Inside play area: warm flat brown with slight variation
+        const variation = (seededRandom(Math.floor(vx * 5 + 5000), Math.floor(vy * 5 + 5000)) - 0.5) * 0.04;
+        tmpColor.copy(playColor);
+        tmpColor.r = THREE.MathUtils.clamp(tmpColor.r + variation, 0, 1);
+        tmpColor.g = THREE.MathUtils.clamp(tmpColor.g + variation * 0.7, 0, 1);
+        tmpColor.b = THREE.MathUtils.clamp(tmpColor.b + variation * 0.5, 0, 1);
+      } else if (dE < RIM_WIDTH) {
+        // Rim zone: blend from play color to rim color
+        const rimT = dE / RIM_WIDTH;
+        tmpColor.lerpColors(playColor, rimColor, smoothstep(rimT));
+      } else {
+        // Outer terrain: height-based colouring
+        const t = (heights[i] - minH) / range;
+        if (t < 0.5) {
+          tmpColor.lerpColors(valleyColor, midColor, t * 2);
+        } else {
+          tmpColor.lerpColors(midColor, peakColor, (t - 0.5) * 2);
+        }
+        // Subtle variation
+        const variation = (seededRandom(Math.floor(vx * 3 + 5000), Math.floor(vy * 3 + 5000)) - 0.5) * 0.05;
+        tmpColor.r = THREE.MathUtils.clamp(tmpColor.r + variation, 0, 1);
+        tmpColor.g = THREE.MathUtils.clamp(tmpColor.g + variation * 0.7, 0, 1);
+        tmpColor.b = THREE.MathUtils.clamp(tmpColor.b + variation * 0.5, 0, 1);
+      }
+
+      colors[i * 3] = tmpColor.r;
+      colors[i * 3 + 1] = tmpColor.g;
+      colors[i * 3 + 2] = tmpColor.b;
+    }
+
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   }, []);
 
   return (
-    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]} receiveShadow castShadow>
-      <planeGeometry args={[3000, 3000, 64, 64]} />
-      <meshStandardMaterial color="#C1440E" roughness={0.95} metalness={0.05} />
+    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow castShadow>
+      <planeGeometry args={[TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS]} />
+      <meshStandardMaterial vertexColors roughness={0.92} metalness={0.04} />
     </mesh>
   );
 });
@@ -477,7 +584,6 @@ const CameraController = ({
 
     const mode = cameraModeRef.current;
 
-    // On mode switch: reposition camera smoothly
     if (prevModeRef.current !== mode) {
       prevModeRef.current = mode;
       if (mode === 'overview') {
@@ -489,13 +595,11 @@ const CameraController = ({
     }
 
     if (mode === 'follow') {
-      // Very fast lerp so camera never falls behind the rover
       const lerpFactor = Math.min(1, 14 * delta);
       smoothTarget.current.lerp(targetRef.current, lerpFactor);
       ctrl.target.copy(smoothTarget.current);
       ctrl.update();
     } else {
-      // overview: free orbit, no forced tracking
       ctrl.update();
     }
   });
@@ -514,10 +618,10 @@ const CameraController = ({
   );
 };
 
-// ── Core animation controller
+// ── Core animation controller — position-synced
 const SimulationController = ({
   simulationResult, isPlayingRef, stepRef, isMiningRef,
-  cameraTargetRef, pathPoints, pathHeights, stepDuration, speedRef, onStepBatch, onComplete,
+  cameraTargetRef, pathPoints, pathHeights, stepDuration, speedRef, roverPosRef, onStepBatch, onComplete,
 }: {
   simulationResult: SimulationResult;
   isPlayingRef: React.MutableRefObject<boolean>;
@@ -528,6 +632,7 @@ const SimulationController = ({
   pathHeights: number[];
   stepDuration: number;
   speedRef: React.MutableRefObject<number>;
+  roverPosRef: React.MutableRefObject<THREE.Vector3>;
   onStepBatch: (step: number) => void;
   onComplete: () => void;
 }) => {
@@ -550,13 +655,26 @@ const SimulationController = ({
         onComplete();
         break;
       }
+
+      // SYNC: only advance step if rover is close enough to current target
+      const currentTarget = pathPoints[stepRef.current];
+      if (currentTarget) {
+        const roverPos = roverPosRef.current;
+        const dx = roverPos.x - currentTarget.x;
+        const dz = roverPos.z - currentTarget.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > ARRIVAL_THRESHOLD) {
+          timerRef.current = 0;
+          break;
+        }
+      }
+
       stepRef.current++;
       const step = stepRef.current;
 
       const log = simulationResult.logs[step] ?? null;
       isMiningRef.current = log ? log.action === 'mine' : false;
 
-      // Update camera target with correct terrain height
       if (pathPoints[step]) {
         cameraTargetRef.current.set(pathPoints[step].x, (pathHeights[step] ?? 0) + 2, pathPoints[step].z);
       }
@@ -581,9 +699,10 @@ const Scene: React.FC<SceneProps> = ({
   const isMiningRef = useRef(false);
   const isPlayingRef = useRef(false);
   const cameraTargetRef = useRef(new THREE.Vector3(0, 2, 0));
+  const roverPosRef = useRef(new THREE.Vector3(0, 0, 0));
 
-  const [speed, setSpeed] = useState(1);
-  const speedRef = useRef(1);
+  const [speed, setSpeed] = useState(0.25);
+  const speedRef = useRef(0.25);
   useEffect(() => { speedRef.current = speed; }, [speed]);
 
   const [localPaused, setLocalPaused] = useState(false);
@@ -618,7 +737,6 @@ const Scene: React.FC<SceneProps> = ({
     );
   }, [simulationResult]);
 
-  // Precomputed terrain heights — eliminates per-frame raycasting entirely
   const pathHeights = useMemo<number[]>(() =>
     pathPoints.map(p => estimateTerrainHeight(p.x, p.z))
   , [pathPoints]);
@@ -641,7 +759,6 @@ const Scene: React.FC<SceneProps> = ({
     onComplete?.();
   }, [onComplete]);
 
-  // isDay — only triggers re-render when it actually changes (day/night flip)
   const [isDay, setIsDay] = useState(true);
   const prevIsDayRef = useRef(true);
   useEffect(() => {
@@ -709,7 +826,7 @@ const Scene: React.FC<SceneProps> = ({
               <ambientLight intensity={0.62} color="#b8c0d0" />
               <hemisphereLight intensity={0.38} color="#d5deef" groundColor="#1c2230" />
               <directionalLight position={[-60, 80, -30]} intensity={0.55} color="#dbe4f2" />
-              <pointLight position={currentRoverPos} intensity={5} distance={46} color="#f8fafc" castShadow />
+              <pointLight position={[currentRoverPos[0], currentRoverPos[1] + 1.2, currentRoverPos[2]]} intensity={5} distance={46} color="#f8fafc" castShadow />
             </>
           )}
 
@@ -718,10 +835,8 @@ const Scene: React.FC<SceneProps> = ({
 
           {pathPoints.length > 0 && <PathLine pathPoints={pathPoints} />}
 
-          {/* Single draw call for all obstacles */}
           <ObstaclesInstanced map={map} />
 
-          {/* Isolated mineral component — only re-renders when collectedStep changes */}
           <MapMinerals map={map} mineralCollectionMap={mineralCollectionMap} collectedStep={collectedStep} />
 
           {isMiningRef.current && <MiningEffect position={currentRoverPos} />}
@@ -730,6 +845,7 @@ const Scene: React.FC<SceneProps> = ({
             pathPoints={pathPoints.length > 0 ? pathPoints : [roverInitPoint]}
             stepRef={stepRef}
             isMiningRef={isMiningRef}
+            roverPosRef={roverPosRef}
           />
 
           {simulationResult && isPlaying && (
@@ -744,6 +860,7 @@ const Scene: React.FC<SceneProps> = ({
               pathHeights={pathHeights}
               stepDuration={stepDurationSec}
               speedRef={speedRef}
+              roverPosRef={roverPosRef}
               onStepBatch={handleStepBatch}
               onComplete={handleComplete}
             />
@@ -820,7 +937,6 @@ const Scene: React.FC<SceneProps> = ({
               backdropFilter: 'blur(8px)',
             }}
           >
-            {/* Pause / Resume */}
             <button
               onClick={() => setLocalPaused(p => !p)}
               disabled={!isPlaying}
@@ -843,7 +959,6 @@ const Scene: React.FC<SceneProps> = ({
 
             <div style={{ width: 1, height: 24, background: '#374151' }} />
 
-            {/* Camera mode toggle */}
             <button
               onClick={() => setCameraMode(m => m === 'follow' ? 'overview' : 'follow')}
               style={{

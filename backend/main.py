@@ -1,11 +1,14 @@
 import asyncio
 import csv
+import json
 import os
 import random
+import uuid
+from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from infer import MIN_TIME_LIMIT_HOURS, run_inference
+from infer import run_inference
 
 app = FastAPI()
 
@@ -20,6 +23,10 @@ app.add_middleware(
 # Configuration
 MAPS_DIR = "mars_maps"
 DEFAULT_MAP = "mars_map_50x50.csv"
+SIMULATIONS_DIR = "simulations"
+
+# Ensure simulations dir exists
+os.makedirs(SIMULATIONS_DIR, exist_ok=True)
 
 
 class ConnectionManager:
@@ -86,7 +93,8 @@ def get_map(random_map: bool = True):
 
 class SimulationRequest(BaseModel):
     map_file: str
-    time_limit_hours: int = Field(default=MIN_TIME_LIMIT_HOURS, ge=MIN_TIME_LIMIT_HOURS)
+    time_limit_hours: int = Field(default=24, ge=24)
+    collect_all: bool = True
 
 @app.post("/simulate")
 def start_simulation(request: SimulationRequest):
@@ -100,7 +108,90 @@ def start_simulation(request: SimulationRequest):
         raise HTTPException(status_code=404, detail=f"Map file '{request.map_file}' not found")
         
     try:
-        result = run_inference(map_path, request.time_limit_hours)
+        result = run_inference(
+            map_path,
+            None,
+            request.time_limit_hours,
+            request.collect_all,
+        )
+
+        # Auto-save simulation
+        sim_id = uuid.uuid4().hex
+        grid = load_map_from_csv(map_path)
+        sim_record = {
+            "id": sim_id,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "hours": request.time_limit_hours,
+            "mapFile": request.map_file,
+            "mapGrid": grid,
+            "result": result,
+        }
+        sim_path = os.path.join(SIMULATIONS_DIR, f"{sim_id}.json")
+        with open(sim_path, "w") as f:
+            json.dump(sim_record, f)
+
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Simulation CRUD endpoints ──
+
+@app.get("/simulations")
+def list_simulations():
+    """List all saved simulations (metadata only, no full result)."""
+    sims = []
+    if not os.path.isdir(SIMULATIONS_DIR):
+        return sims
+    for fname in sorted(os.listdir(SIMULATIONS_DIR), reverse=True):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(SIMULATIONS_DIR, fname)
+        try:
+            with open(fpath, "r") as f:
+                data = json.load(f)
+            sims.append({
+                "id": data.get("id", fname.replace(".json", "")),
+                "createdAt": data.get("createdAt", ""),
+                "hours": data.get("hours", 24),
+                "mapFile": data.get("mapFile", ""),
+                "stepsUsed": data.get("result", {}).get("steps_used", 0),
+                "success": data.get("result", {}).get("success", False),
+                "mineralsCollected": len(data.get("result", {}).get("minerals", [])),
+                "totalMinerals": data.get("result", {}).get("total_minerals", 0),
+            })
+        except Exception:
+            continue
+    return sims
+
+
+@app.get("/simulations/{sim_id}")
+def get_simulation(sim_id: str):
+    """Get a specific saved simulation (full data including mapGrid and result)."""
+    fpath = os.path.join(SIMULATIONS_DIR, f"{sim_id}.json")
+    if not os.path.exists(fpath):
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    with open(fpath, "r") as f:
+        return json.load(f)
+
+
+@app.delete("/simulations/{sim_id}")
+def delete_simulation(sim_id: str):
+    """Delete a specific saved simulation."""
+    fpath = os.path.join(SIMULATIONS_DIR, f"{sim_id}.json")
+    if not os.path.exists(fpath):
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    os.remove(fpath)
+    return {"status": "deleted", "id": sim_id}
+
+
+@app.delete("/simulations")
+def clear_simulations():
+    """Delete all saved simulations."""
+    count = 0
+    if os.path.isdir(SIMULATIONS_DIR):
+        for fname in os.listdir(SIMULATIONS_DIR):
+            if fname.endswith(".json"):
+                os.remove(os.path.join(SIMULATIONS_DIR, fname))
+                count += 1
+    return {"status": "cleared", "deleted": count}

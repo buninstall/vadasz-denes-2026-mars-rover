@@ -3,14 +3,15 @@ Inference script: run the mission planner and produce
 an optimised sequence of (row, col) waypoints.
 
 Usage:
-    python infer.py --map mars_maps/mars_map_00001.csv --hours 24
+    python infer.py --map mars_maps/mars_map_00001.csv --brain rover_model.npy --hours 24
+    python infer.py --map mars_maps/mars_map_00001.csv --hours 24 --respect-time-limit
 """
 
 import argparse
 import json
 import os
 
-from ai import MarsMission, RoverPlanner, DAY_STEPS, CYCLE
+from ai import MarsMission, RLAgent, DAY_STEPS, CYCLE
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -20,15 +21,12 @@ MAX_STEPS = 10_000
 MIN_TIME_LIMIT_HOURS = 24
 
 
-def validate_time_limit_hours(time_limit_hours: int) -> int:
-    if time_limit_hours < MIN_TIME_LIMIT_HOURS:
-        raise ValueError(
-            f"time_limit_hours must be at least {MIN_TIME_LIMIT_HOURS}, got {time_limit_hours}"
-        )
-    return time_limit_hours
-
-
-def run_inference(map_file: str, time_limit_hours: int = 24) -> dict:
+def run_inference(
+    map_file: str,
+    brain_file: str | None = None,
+    time_limit_hours: int = 24,
+    collect_all: bool = True,
+) -> dict:
     """
     Run a single requirements-aligned planning episode and return the full result.
 
@@ -45,9 +43,8 @@ def run_inference(map_file: str, time_limit_hours: int = 24) -> dict:
         success     – True if every mineral was collected and the rover finished at start
         logs        - detailed logs for each step
     """
-    time_limit_hours = validate_time_limit_hours(time_limit_hours)
     mission = MarsMission(map_file)
-    agent = RoverPlanner(mission)
+    agent = RLAgent(mission)
 
     pos = mission.start_pos
     battery = 100.0
@@ -62,10 +59,13 @@ def run_inference(map_file: str, time_limit_hours: int = 24) -> dict:
     total_minerals = len(mission.minerals)
     termination_reason = "unknown"
 
-    agent.reset_planner_state(mins)
+    agent._path_cache = []
+    agent._path_target = None
 
     # The PDF defines the input time in hours and movement/mining in 0.5h slots.
-    max_steps = min(MAX_STEPS, int(time_limit_hours * 2))
+    effective_hours = max(MIN_TIME_LIMIT_HOURS, int(time_limit_hours))
+    time_budget_steps = max(1, effective_hours * 2)
+    max_steps = MAX_STEPS if collect_all else min(MAX_STEPS, time_budget_steps)
     active_target = None
 
     logs.append({
@@ -126,13 +126,8 @@ def run_inference(map_file: str, time_limit_hours: int = 24) -> dict:
             termination_reason = "completed"
             break
 
-        target_open = {target} if target in mins else None
-        current_path = agent.get_path(pos, target, extra_open=target_open)
-        home_path = (
-            agent.get_path(target, mission.start_pos, extra_open=target_open)
-            if target != mission.start_pos
-            else []
-        )
+        current_path = agent.get_path(pos, target)
+        home_path = agent.get_path(target, mission.start_pos) if target != mission.start_pos else []
         reserve_blocks = len(current_path) + len(home_path)
         safe_speed = agent.pick_route_speed(reserve_blocks, battery, step)
         retreating_home = (
@@ -208,7 +203,6 @@ def run_inference(map_file: str, time_limit_hours: int = 24) -> dict:
             battery = agent._mine_battery(battery, step)
             min_type = mission.minerals[pos]
             mins.remove(pos)
-            agent.mark_mined(pos)
             step += 1
             minerals_collected.append({
                 "pos": list(pos),
@@ -270,10 +264,9 @@ if __name__ == "__main__":
         help="Path to the map CSV file",
     )
     parser.add_argument(
-        "--hours",
-        type=int,
-        default=MIN_TIME_LIMIT_HOURS,
-        help=f"Mission timeframe in hours (minimum {MIN_TIME_LIMIT_HOURS})",
+        "--brain",
+        default=os.path.join(BASE_DIR, "rover_model.npy"),
+        help="Unused legacy argument kept for CLI compatibility",
     )
     parser.add_argument(
         "--hours",
@@ -289,10 +282,12 @@ if __name__ == "__main__":
     parser.add_argument("--json", action="store_true", help="Output result as JSON")
     args = parser.parse_args()
 
-    try:
-        result = run_inference(args.map, args.hours)
-    except ValueError as exc:
-        parser.error(str(exc))
+    result = run_inference(
+        args.map,
+        args.brain,
+        time_limit_hours=args.hours,
+        collect_all=not args.respect_time_limit,
+    )
 
     if args.json:
         print(json.dumps(result, indent=2))

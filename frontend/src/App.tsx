@@ -40,7 +40,18 @@ function LoadingScreen({ onLoaded }: { onLoaded: () => void }) {
 }
 
 export default function App() {
-  const { map, simulationResult, isPlaying, loading, start, onSimulationComplete } = useSimulation();
+  const {
+    map,
+    simulationResult,
+    isPlaying,
+    loading,
+    replays,
+    start,
+    loadReplay,
+    deleteReplay,
+    clearReplays,
+    onSimulationComplete,
+  } = useSimulation();
   const [isLoaded, setIsLoaded] = useState(false);
   // currentStep is updated by the Scene's onStep callback — only every 10 sim-steps
   const [currentStep, setCurrentStep] = useState(0);
@@ -97,7 +108,14 @@ export default function App() {
               <Dashboard simulationResult={simulationResult} currentStep={currentStep} isPlaying={isPlaying} />
             </div>
             <div className="pointer-events-auto">
-              <Controls onStart={start} isLoading={loading} />
+              <Controls
+                onStart={start}
+                onReplay={loadReplay}
+                onDeleteReplay={deleteReplay}
+                onClearReplays={clearReplays}
+                replays={replays}
+                isLoading={loading}
+              />
             </div>
           </div>
 
