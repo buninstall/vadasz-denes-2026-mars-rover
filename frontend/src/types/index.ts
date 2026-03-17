@@ -2,6 +2,7 @@ export type BlockType = '.' | '#' | 'B' | 'Y' | 'G' | 'S';
 
 export interface MapData {
   grid: BlockType[][];
+  filename: string;
 }
 
 export interface RoverState {

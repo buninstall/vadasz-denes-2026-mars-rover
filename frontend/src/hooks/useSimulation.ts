@@ -55,7 +55,7 @@ export const useSimulation = () => {
     setIsPlaying(false);
     setSimulationResult(null);
     try {
-      const data = await simulationApi.startSimulation(hours);
+      const data = await simulationApi.startSimulation(hours, map.filename);
       setSimulationResult(data);
       setIsPlaying(true);
 
@@ -74,7 +74,7 @@ export const useSimulation = () => {
       const record = await simulationApi.getSimulation(replayId);
       setSimulationResult(record.result);
       if (record.mapGrid && record.mapGrid.length > 0) {
-        setMap({ grid: record.mapGrid as any });
+        setMap({ grid: record.mapGrid as any, filename: record.mapFile || 'unknown' });
       }
       setIsPlaying(true);
     } catch (err) {

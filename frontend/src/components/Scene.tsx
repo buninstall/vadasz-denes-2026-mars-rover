@@ -233,11 +233,12 @@ const SceneryInstanced = React.memo(() => {
 });
 
 // ── Rover
-const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef }: {
+const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speedRef }: {
   pathPoints: THREE.Vector3[];
   stepRef: React.MutableRefObject<number>;
   isMiningRef: React.MutableRefObject<boolean>;
   roverPosRef: React.MutableRefObject<THREE.Vector3>;
+  speedRef: React.MutableRefObject<number>;
 }) => {
   const { scene } = useGLTF('/models/Rover.glb');
   const roverRef = useRef<THREE.Group>(null);
@@ -265,17 +266,26 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef }: {
     const position = roverRef.current.position;
     const velocity = velocityRef.current;
 
-    const accelScale = isMiningRef.current ? 6 : 18;
-    velocity.x += THREE.MathUtils.clamp((target.x - position.x) * accelScale, -20, 20) * delta;
-    velocity.z += THREE.MathUtils.clamp((target.z - position.z) * accelScale, -20, 20) * delta;
+    const spd = Math.max(0.1, speedRef.current);
+    const accelScale = (isMiningRef.current ? 6 : 18) * spd;
+    const maxHorizontalSpeed = 14 * spd;
+    
+    // Stop applying acceleration if we reached the final waypoint
+    const distToTarget = Math.hypot(target.x - position.x, target.z - position.z);
+    const isAtEnd = idx === pathPoints.length - 1 && distToTarget < 0.1;
+    
+    if (!isAtEnd) {
+      velocity.x += THREE.MathUtils.clamp((target.x - position.x) * accelScale, -20 * spd, 20 * spd) * delta;
+      velocity.z += THREE.MathUtils.clamp((target.z - position.z) * accelScale, -20 * spd, 20 * spd) * delta;
+    }
 
-    const horizontalDamping = Math.exp(-6 * delta);
+    const horizontalDamping = isAtEnd ? Math.exp(-15 * delta) : Math.exp(-6 * delta);
     velocity.x *= horizontalDamping;
     velocity.z *= horizontalDamping;
 
     const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
-    if (horizontalSpeed > 14) {
-      const scale = 14 / horizontalSpeed;
+    if (horizontalSpeed > maxHorizontalSpeed && !isAtEnd) {
+      const scale = maxHorizontalSpeed / horizontalSpeed;
       velocity.x *= scale;
       velocity.z *= scale;
     }
@@ -698,8 +708,29 @@ const Scene: React.FC<SceneProps> = ({
   const stepRef = useRef(0);
   const isMiningRef = useRef(false);
   const isPlayingRef = useRef(false);
-  const cameraTargetRef = useRef(new THREE.Vector3(0, 2, 0));
-  const roverPosRef = useRef(new THREE.Vector3(0, 0, 0));
+
+  // Find the 'S' starting point on the map grid FIRST to use in initial state
+  const mapStartWorld: [number, number, number] = useMemo(() => {
+    for (let row = 0; row < map.grid.length; row++) {
+      for (let col = 0; col < map.grid[row].length; col++) {
+        if (map.grid[row][col] === 'S') {
+          return [col * CELL_SIZE - OFFSET, 0, row * CELL_SIZE - OFFSET];
+        }
+      }
+    }
+    return [0, 0, 0];
+  }, [map]);
+
+  const cameraTargetRef = useRef(new THREE.Vector3(mapStartWorld[0], 2, mapStartWorld[2]));
+  const roverPosRef = useRef(new THREE.Vector3(mapStartWorld[0], 0, mapStartWorld[2]));
+
+  // Update refs when a new map is loaded
+  useEffect(() => {
+    if (!isPlayingRef.current) {
+      cameraTargetRef.current.set(mapStartWorld[0], 2, mapStartWorld[2]);
+      roverPosRef.current.set(mapStartWorld[0], 0, mapStartWorld[2]);
+    }
+  }, [mapStartWorld]);
 
   const [speed, setSpeed] = useState(0.25);
   const speedRef = useRef(0.25);
@@ -773,8 +804,8 @@ const Scene: React.FC<SceneProps> = ({
       const [row, col] = simulationResult.start;
       return [col * CELL_SIZE - OFFSET, 14, row * CELL_SIZE - OFFSET + 18];
     }
-    return [0, 14, 18];
-  }, [simulationResult]);
+    return [mapStartWorld[0], 14, mapStartWorld[2] + 18];
+  }, [simulationResult, mapStartWorld]);
 
   const roverInitPoint = useMemo(() => {
     if (pathPoints.length > 0) return pathPoints[0];
@@ -782,14 +813,14 @@ const Scene: React.FC<SceneProps> = ({
       const [row, col] = simulationResult.start;
       return new THREE.Vector3(col * CELL_SIZE - OFFSET, 0, row * CELL_SIZE - OFFSET);
     }
-    return new THREE.Vector3(0, 0, 0);
-  }, [pathPoints, simulationResult]);
+    return new THREE.Vector3(mapStartWorld[0], mapStartWorld[1], mapStartWorld[2]);
+  }, [pathPoints, simulationResult, mapStartWorld]);
 
   const currentRoverPos: [number, number, number] = useMemo(() => {
-    if (!pathPoints.length) return [0, 0, 0];
+    if (!pathPoints.length) return mapStartWorld;
     const idx = Math.min(collectedStep, pathPoints.length - 1);
     return [pathPoints[idx].x, pathHeights[idx] ?? 0, pathPoints[idx].z];
-  }, [pathPoints, pathHeights, collectedStep]);
+  }, [pathPoints, pathHeights, collectedStep, mapStartWorld]);
 
   const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
   const canPlay = !!simulationResult;
@@ -846,6 +877,7 @@ const Scene: React.FC<SceneProps> = ({
             stepRef={stepRef}
             isMiningRef={isMiningRef}
             roverPosRef={roverPosRef}
+            speedRef={speedRef}
           />
 
           {simulationResult && isPlaying && (

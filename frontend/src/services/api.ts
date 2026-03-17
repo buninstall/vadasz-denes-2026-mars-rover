@@ -29,13 +29,13 @@ export interface SimulationRecord {
 
 export const simulationApi = {
   getMap: async (): Promise<MapData> => {
-    const response = await api.get('/map', { params: { random_map: false } });
-    return { grid: response.data.data || [] };
+    const response = await api.get('/map', { params: { random_map: true } });
+    return { grid: response.data.data || [], filename: response.data.filename || 'mars_map_50x50.csv' };
   },
   
-  startSimulation: async (hours: number): Promise<SimulationResult> => {
+  startSimulation: async (hours: number, mapFile: string): Promise<SimulationResult> => {
     const response = await api.post('/simulate', {
-      map_file: 'mars_map_50x50.csv',
+      map_file: mapFile,
       time_limit_hours: hours,
       collect_all: false,
     });
