@@ -148,6 +148,7 @@ const Dashboard: React.FC<DashboardProps> = ({ simulationResult, currentStep, is
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <BatteryBar level={battery} />
         <StatBox label="Szimulációs Idő" value={simTime} sub={`Lépés: ${stepNum}`} />
+        <StatBox label="Eltelt Idő" value={`${log?.time_hours?.toFixed(1) ?? '0.0'} h`} />
         <StatBox
           label="Ásványok"
           value={`${collectedTotal}/${totalMinerals}`}
