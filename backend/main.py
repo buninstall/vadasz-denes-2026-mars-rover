@@ -5,7 +5,8 @@ import os
 import random
 import uuid
 from datetime import datetime, timezone
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+import io
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from infer import run_inference
@@ -24,9 +25,11 @@ app.add_middleware(
 MAPS_DIR = "mars_maps"
 DEFAULT_MAP = "mars_map_50x50.csv"
 SIMULATIONS_DIR = "simulations"
+UPLOADS_DIR = "uploads"
 
 # Ensure simulations dir exists
 os.makedirs(SIMULATIONS_DIR, exist_ok=True)
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 
 class ConnectionManager:
@@ -96,6 +99,42 @@ class SimulationRequest(BaseModel):
     time_limit_hours: int = Field(default=24, ge=24)
     collect_all: bool = False
 
+@app.post("/upload-map")
+async def upload_map(file: UploadFile = File(...)):
+    content = await file.read()
+    try:
+        content_str = content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid file encoding. Must be UTF-8.")
+    
+    grid = []
+    reader = csv.reader(io.StringIO(content_str), skipinitialspace=True)
+    for row in reader:
+        clean_row = [cell.strip() for cell in row if cell.strip()]
+        if clean_row:
+            grid.append(clean_row)
+
+    if len(grid) != 50 or any(len(row) != 50 for row in grid):
+        raise HTTPException(status_code=400, detail="Map must be exactly 50x50.")
+
+    s_count = sum(row.count("S") for row in grid)
+    if s_count != 1:
+        raise HTTPException(status_code=400, detail="Map must contain exactly one starting position 'S'.")
+
+    # save file
+    file_id = f"custom_{uuid.uuid4().hex}.csv"
+    file_path = os.path.join(UPLOADS_DIR, file_id)
+    with open(file_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerows(grid)
+
+    return {
+        "filename": file_id,
+        "width": len(grid[0]) if grid else 0,
+        "height": len(grid),
+        "data": grid
+    }
+
 @app.post("/simulate")
 def start_simulation(request: SimulationRequest):
     # Resolve map file path
@@ -103,6 +142,8 @@ def start_simulation(request: SimulationRequest):
         map_path = request.map_file
     else:
         map_path = os.path.join(MAPS_DIR, request.map_file)
+        if not os.path.exists(map_path):
+            map_path = os.path.join(UPLOADS_DIR, request.map_file)
         
     if not os.path.exists(map_path):
         raise HTTPException(status_code=404, detail=f"Map file '{request.map_file}' not found")

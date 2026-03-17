@@ -68,6 +68,21 @@ export const useSimulation = () => {
     }
   };
 
+  const uploadCustomMap = async (file: File) => {
+    setLoading(true);
+    try {
+      const newMap = await simulationApi.uploadMap(file);
+      setMap(newMap);
+      setSimulationResult(null);
+      setIsPlaying(false);
+    } catch (error) {
+      console.error('Failed to upload map', error);
+      alert('Failed to upload custom map. Ensure it is a valid 50x50 CSV with exactly one "S".');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadReplay = useCallback(async (replayId: string) => {
     try {
       setLoading(true);
@@ -117,5 +132,6 @@ export const useSimulation = () => {
     deleteReplay,
     clearReplays,
     onSimulationComplete,
+    uploadCustomMap,
   };
 };

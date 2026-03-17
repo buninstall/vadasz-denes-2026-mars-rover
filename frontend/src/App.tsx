@@ -51,6 +51,7 @@ export default function App() {
     deleteReplay,
     clearReplays,
     onSimulationComplete,
+    uploadCustomMap,
   } = useSimulation();
   const [isLoaded, setIsLoaded] = useState(false);
   // currentStep is updated by the Scene's onStep callback — only every 10 sim-steps
@@ -115,6 +116,7 @@ export default function App() {
                 onClearReplays={clearReplays}
                 replays={replays}
                 isLoading={loading}
+                onUploadMap={uploadCustomMap}
               />
             </div>
           </div>

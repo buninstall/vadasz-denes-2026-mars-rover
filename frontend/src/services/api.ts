@@ -33,6 +33,17 @@ export const simulationApi = {
     return { grid: response.data.data || [], filename: response.data.filename || 'mars_map_50x50.csv' };
   },
   
+  uploadMap: async (file: File): Promise<MapData> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/upload-map', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return { grid: response.data.data || [], filename: response.data.filename };
+  },
+  
   startSimulation: async (hours: number, mapFile: string): Promise<SimulationResult> => {
     const response = await api.post('/simulate', {
       map_file: mapFile,

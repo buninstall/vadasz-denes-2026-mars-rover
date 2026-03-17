@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { ReplayEntry } from '../types';
 
 interface ControlsProps {
@@ -8,6 +8,7 @@ interface ControlsProps {
   onClearReplays: () => void;
   replays: ReplayEntry[];
   isLoading: boolean;
+  onUploadMap?: (file: File) => void;
 }
 
 const formatReplayLabel = (replay: ReplayEntry) => {
@@ -25,9 +26,11 @@ const Controls: React.FC<ControlsProps> = ({
   onClearReplays,
   replays,
   isLoading,
+  onUploadMap,
 }) => {
   const [hours, setHours] = useState(24);
   const [selectedReplayId, setSelectedReplayId] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!replays.length) {
@@ -106,6 +109,51 @@ const Controls: React.FC<ControlsProps> = ({
       </div>
 
       <div style={{ height: 1, background: '#374151', opacity: 0.7 }} />
+
+      {onUploadMap && (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+              Egyéni pálya
+            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  onUploadMap?.(e.target.files[0]);
+                  e.target.value = ''; // Reset input so same file can be uploaded again
+                }
+              }}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading}
+              style={{
+                padding: '6px 12px',
+                background: 'transparent',
+                color: isLoading ? '#6b7280' : '#d1d5db',
+                border: '1px dashed ' + (isLoading ? '#4b5563' : '#6b7280'),
+                borderRadius: 6,
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.14em',
+                textTransform: 'uppercase',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                fontFamily: 'monospace',
+                transition: 'all 0.2s',
+                whiteSpace: 'nowrap',
+                textAlign: 'center',
+              }}
+            >
+              Saját pálya feltöltése
+            </button>
+          </div>
+          <div style={{ height: 1, background: '#374151', opacity: 0.7 }} />
+        </>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <label style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
