@@ -13,103 +13,80 @@ const formatTime = (hours: number) => {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 };
 
+const getActionLabel = (log: SimLogEntry) => {
+  if (log.action === 'mine') return 'Sample';
+  if (log.action === 'start') return 'Boot';
+  return 'Move';
+};
+
+const getActionCopy = (log: SimLogEntry) => {
+  if (log.action === 'mine') return `Mineral capture: ${log.minerals_collected.join(', ')}`;
+  if (log.action === 'start') return 'Mission clock engaged and path initialized.';
+  return 'Position updated along planned traversal route.';
+};
+
 const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep }) => {
   const visibleLogs: SimLogEntry[] = useMemo(() => {
     if (!simulationResult?.logs) return [];
     const end = Math.min(currentStep, simulationResult.logs.length - 1);
-    // Show recent meaningful entries (mining + regular movement snapshots)
     const filtered: SimLogEntry[] = [];
+
     for (let i = end; i >= 0 && filtered.length < 24; i--) {
-      const l = simulationResult.logs[i];
-      if (l.action === 'mine' || l.action === 'start' || i % 6 === 0) {
-        filtered.push(l);
+      const log = simulationResult.logs[i];
+      if (log.action === 'mine' || log.action === 'start' || i % 6 === 0) {
+        filtered.push(log);
       }
     }
+
     return filtered;
   }, [simulationResult, currentStep]);
 
   return (
-    <div
-      style={{
-        background: 'rgba(2,6,14,0.68)',
-        border: '1px solid #374151',
-        borderRadius: 8,
-        overflow: 'hidden',
-        fontFamily: 'monospace',
-        fontSize: 11,
-        boxShadow: '0 12px 32px rgba(0,0,0,0.25)',
-        backdropFilter: 'blur(8px)',
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '7px 12px',
-          borderBottom: '1px solid #374151',
-          background: 'rgba(3,7,18,0.85)',
-        }}
-      >
-        <span style={{ color: '#f3f4f6', fontWeight: 700, letterSpacing: '0.15em', fontSize: 9, textTransform: 'uppercase' }}>
-          Eseménynapló
-        </span>
-        {simulationResult && (
-          <span style={{ color: '#9ca3af', fontSize: 9, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f3f4f6', display: 'inline-block' }} />
-            LIVE
+    <section className="panel log-panel">
+      <div className="panel-header">
+        <div>
+          <p className="panel-kicker">Log</p>
+          <h2 className="panel-title">Events</h2>
+        </div>
+        <div className="dashboard-flags">
+          <span className={`status-pill ${simulationResult ? 'status-pill--live' : ''}`}>
+            {simulationResult ? 'Live' : 'Idle'}
           </span>
-        )}
+          <span className="status-pill">{visibleLogs.length} entries</span>
+        </div>
       </div>
 
-      {/* Log entries */}
-      <div style={{ height: 200, overflowY: 'auto', padding: '6px 0' }}>
+      <div className="log-scroll">
         {visibleLogs.length === 0 ? (
-          <div style={{ color: '#6b7280', padding: '8px 12px', fontStyle: 'italic' }}>
-            Nincs telemetriai adat…
-          </div>
+          <div className="log-empty">No data yet.</div>
         ) : (
-          visibleLogs.map((log, i) => {
-            const isMine = log.action === 'mine';
+          visibleLogs.map((log, index) => {
+            const actionLabel = getActionLabel(log);
+            const mineAction = log.action === 'mine';
+
             return (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  padding: '3px 12px',
-                  background: isMine ? 'rgba(243,244,246,0.06)' : 'transparent',
-                  borderLeft: isMine ? '2px solid #e5e7eb' : '2px solid transparent',
-                }}
-              >
-                <span style={{ color: '#9ca3af', whiteSpace: 'nowrap' }}>
-                  [{formatTime(6 + log.time_hours)}]
-                </span>
-                <span style={{ color: '#cbd5e1', whiteSpace: 'nowrap' }}>
-                  {log.position[0]},{log.position[1]}
-                </span>
-                <span style={{ color: '#f3f4f6', flex: 1 }}>
-                  {log.action === 'mine'
-                    ? `Bányászat: ${log.minerals_collected.join(', ')}`
-                    : log.action === 'start'
-                    ? 'Misszió indítva'
-                    : 'Mozgás'}
-                </span>
-                <span
-                  style={{
-                    color: '#e5e7eb',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {log.battery.toFixed(0)}%
-                </span>
-              </div>
+              <article key={`${log.step}-${index}`} className={`log-row ${mineAction ? 'log-row--accent' : ''}`}>
+                <div className="log-row-main">
+                  <div className="log-headline">
+                    <span className={`log-tag ${mineAction ? 'log-tag--amber' : 'log-tag--cyan'}`}>{actionLabel}</span>
+                    <strong className="log-time">{formatTime(6 + log.time_hours)}</strong>
+                    <span className="log-coords">
+                      R{log.position[0]} C{log.position[1]}
+                    </span>
+                  </div>
+                  <p className="log-copy">{getActionCopy(log)}</p>
+                </div>
+
+                <div className="log-meta">
+                  <span>Step {log.step}</span>
+                  <span>{log.battery.toFixed(0)}% battery</span>
+                </div>
+              </article>
             );
           })
         )}
       </div>
-    </div>
+    </section>
   );
 };
 

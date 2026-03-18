@@ -14,64 +14,6 @@ const formatTime = (hours: number) => {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 };
 
-const StatBox = ({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string | number;
-  sub?: string;
-}) => (
-  <div
-    style={{
-      background: 'rgba(3,7,18,0.65)',
-      border: '1px solid #374151',
-      borderRadius: 6,
-      padding: '10px 14px',
-      minWidth: 90,
-    }}
-  >
-    <div style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
-      {label}
-    </div>
-    <div style={{ color: '#f3f4f6', fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{value}</div>
-    {sub && <div style={{ color: '#9ca3af', fontSize: 9, marginTop: 3 }}>{sub}</div>}
-  </div>
-);
-
-const BatteryBar = ({ level }: { level: number }) => {
-  return (
-    <div
-      style={{
-        background: 'rgba(3,7,18,0.65)',
-        border: '1px solid #374151',
-        borderRadius: 6,
-        padding: '10px 14px',
-        minWidth: 120,
-      }}
-    >
-      <div style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 6 }}>
-        Akkumulátor
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{ flex: 1, height: 8, background: '#111827', borderRadius: 4, overflow: 'hidden' }}>
-          <div
-            style={{
-              height: '100%',
-              width: `${level}%`,
-              background: '#f3f4f6',
-              borderRadius: 4,
-              transition: 'width 0.35s',
-            }}
-          />
-        </div>
-        <span style={{ color: '#f9fafb', fontSize: 14, fontWeight: 700, minWidth: 38 }}>{level.toFixed(0)}%</span>
-      </div>
-    </div>
-  );
-};
-
 const Dashboard: React.FC<DashboardProps> = ({ simulationResult, currentStep, isPlaying }) => {
   const log: SimLogEntry | null = useMemo(() => {
     if (!simulationResult?.logs?.length) return null;
@@ -81,83 +23,108 @@ const Dashboard: React.FC<DashboardProps> = ({ simulationResult, currentStep, is
   const mineralsCollected = useMemo(() => {
     if (!simulationResult) return { B: 0, Y: 0, G: 0 };
     const acc = { B: 0, Y: 0, G: 0 };
-    simulationResult.minerals.forEach(m => {
-      if (m.step <= currentStep) acc[m.type as 'B' | 'Y' | 'G']++;
+    simulationResult.minerals.forEach((mineral) => {
+      if (mineral.step <= currentStep) {
+        acc[mineral.type as 'B' | 'Y' | 'G']++;
+      }
     });
     return acc;
   }, [simulationResult, currentStep]);
 
   const battery = log?.battery ?? 100;
   const isDay = log?.is_day ?? true;
-  const simTime = log ? formatTime(6 + log.time_hours) : '06:00';
+  const simClock = log ? formatTime(6 + log.time_hours) : '06:00';
+  const elapsedHours = log?.time_hours?.toFixed(1) ?? '0.0';
   const stepNum = log?.step ?? 0;
-  const dist = log?.distance_traveled?.toFixed(1) ?? '0.0';
+  const distance = log?.distance_traveled?.toFixed(1) ?? '0.0';
   const totalMinerals = simulationResult
     ? simulationResult.total_minerals ?? Object.keys(simulationResult.all_minerals ?? {}).length
     : 0;
   const collectedTotal = mineralsCollected.B + mineralsCollected.Y + mineralsCollected.G;
-  const stateText = !simulationResult
-    ? '—'
+  const missionState = !simulationResult
+    ? 'Standby'
     : isPlaying
-    ? (log?.action === 'mine' ? 'Bányászat' : 'Mozgás')
-    : (simulationResult.success ? 'Kész' : 'Leállt');
+      ? log?.action === 'mine'
+        ? 'Sampling'
+        : 'Traverse'
+      : simulationResult.success
+        ? 'Complete'
+        : 'Paused';
+  const batteryState = battery > 65 ? 'Nominal' : battery > 35 ? 'Reserve' : 'Critical';
+  const mineralProgress = totalMinerals > 0 ? Math.round((collectedTotal / totalMinerals) * 100) : 0;
+  const routeProgress = simulationResult
+    ? Math.round(
+        (Math.min(currentStep, simulationResult.path.length - 1) / Math.max(simulationResult.path.length - 1, 1)) * 100,
+      )
+    : 0;
+  const batteryTone =
+    battery > 65 ? 'var(--signal-ok)' : battery > 35 ? 'var(--signal-warn)' : 'var(--signal-danger)';
 
   return (
-    <div
-      style={{
-        background: 'rgba(2,6,14,0.68)',
-        border: '1px solid #374151',
-        borderRadius: 10,
-        padding: '12px 16px',
-        backdropFilter: 'blur(8px)',
-        boxShadow: '0 12px 36px rgba(0,0,0,0.25)',
-        fontFamily: 'monospace',
-      }}
-    >
-      {/* Title bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: isPlaying ? '#f3f4f6' : '#6b7280',
-            boxShadow: isPlaying ? '0 0 8px rgba(243,244,246,0.7)' : 'none',
-            animation: isPlaying ? 'pulse 1.2s infinite' : 'none',
-          }}
-        />
-        <span style={{ color: '#f3f4f6', fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase' }}>
-          Mars Rover Telemetria
-        </span>
-        <span
-          style={{
-            marginLeft: 'auto',
-            background: 'rgba(3,7,18,0.8)',
-            border: '1px solid #4b5563',
-            color: '#d1d5db',
-            fontSize: 10,
-            padding: '2px 8px',
-            borderRadius: 4,
-          }}
-        >
-          {isDay ? 'Nappal' : 'Éjszaka'}
-        </span>
+    <section className="panel dashboard-panel">
+      <div className="panel-header">
+        <div>
+          <p className="panel-kicker">Telemetry</p>
+          <h2 className="panel-title">Vitals</h2>
+        </div>
+        <div className="dashboard-flags">
+          <span className={`status-pill ${isPlaying ? 'status-pill--live' : ''}`}>{missionState}</span>
+          <span className="status-pill">{isDay ? 'Day cycle' : 'Night cycle'}</span>
+        </div>
       </div>
 
-      {/* Stats grid */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <BatteryBar level={battery} />
-        <StatBox label="Szimulációs Idő" value={simTime} sub={`Lépés: ${stepNum}`} />
-        <StatBox label="Eltelt Idő" value={`${log?.time_hours?.toFixed(1) ?? '0.0'} h`} />
-        <StatBox
-          label="Ásványok"
-          value={`${collectedTotal}/${totalMinerals}`}
-          sub={`B:${mineralsCollected.B} Y:${mineralsCollected.Y} G:${mineralsCollected.G}`}
-        />
-        <StatBox label="Megtett Táv" value={dist} sub="blokk" />
-        <StatBox label="Állapot" value={stateText} />
+      <div className="dashboard-layout">
+        <div className="metric-grid metric-grid--full">
+          <div className="metric-card metric-card--battery">
+            <div className="metric-topline">
+              <span className="metric-label">Battery</span>
+              <span className="metric-badge" style={{ color: batteryTone }}>
+                {batteryState}
+              </span>
+            </div>
+            <strong className="metric-value" style={{ color: batteryTone }}>
+              {battery.toFixed(0)}%
+            </strong>
+            <div className="battery-rail">
+              <div className="battery-fill" style={{ width: `${battery}%`, background: batteryTone }} />
+            </div>
+          </div>
+
+          <div className="metric-card">
+            <span className="metric-label">Clock</span>
+            <strong className="metric-value">{simClock}</strong>
+            <span className="metric-sub">{elapsedHours} h</span>
+          </div>
+          <div className="metric-card">
+            <span className="metric-label">Step</span>
+            <strong className="metric-value">{stepNum}</strong>
+            <span className="metric-sub">{routeProgress}% route</span>
+          </div>
+          <div className="metric-card">
+            <span className="metric-label">Distance</span>
+            <strong className="metric-value">{distance}</strong>
+            <span className="metric-sub">grid units</span>
+          </div>
+          <div className="metric-card">
+            <span className="metric-label">Collected</span>
+            <strong className="metric-value">
+              {collectedTotal}/{totalMinerals}
+            </strong>
+            <span className="metric-sub">
+              B {mineralsCollected.B} / Y {mineralsCollected.Y} / G {mineralsCollected.G}
+            </span>
+          </div>
+          <div className="metric-card metric-card--status">
+            <div className="metric-topline">
+              <span className="metric-label">Return</span>
+              <span className="metric-badge">{simulationResult?.returned_home ? 'Yes' : simulationResult ? 'No' : 'N/A'}</span>
+            </div>
+            <strong className="metric-value">{mineralProgress}%</strong>
+            <span className="metric-sub">{simulationResult?.termination_reason ?? 'No run loaded.'}</span>
+          </div>
+        </div>
       </div>
-    </div>
+    </section>
   );
 };
 

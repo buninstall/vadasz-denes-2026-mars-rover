@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ReplayEntry } from '../types';
 
 interface ControlsProps {
@@ -9,6 +9,8 @@ interface ControlsProps {
   replays: ReplayEntry[];
   isLoading: boolean;
   onUploadMap?: (file: File) => void;
+  mapFilename?: string;
+  mapSize?: string;
 }
 
 const formatReplayLabel = (replay: ReplayEntry) => {
@@ -16,7 +18,7 @@ const formatReplayLabel = (replay: ReplayEntry) => {
   const hh = date.getHours().toString().padStart(2, '0');
   const mm = date.getMinutes().toString().padStart(2, '0');
   const total = replay.result.total_minerals ?? Object.keys(replay.result.all_minerals ?? {}).length;
-  return `${hh}:${mm} • ${replay.result.minerals.length}/${total} • ${replay.result.steps_used} lépés`;
+  return `${hh}:${mm} • ${replay.result.minerals.length}/${total} • ${replay.result.steps_used} steps`;
 };
 
 const Controls: React.FC<ControlsProps> = ({
@@ -27,6 +29,8 @@ const Controls: React.FC<ControlsProps> = ({
   replays,
   isLoading,
   onUploadMap,
+  mapFilename,
+  mapSize,
 }) => {
   const [hours, setHours] = useState(24);
   const [selectedReplayId, setSelectedReplayId] = useState('');
@@ -37,148 +41,114 @@ const Controls: React.FC<ControlsProps> = ({
       setSelectedReplayId('');
       return;
     }
-    setSelectedReplayId(prev => (replays.some(r => r.id === prev) ? prev : replays[0].id));
+    setSelectedReplayId((prev) => (replays.some((replay) => replay.id === prev) ? prev : replays[0].id));
   }, [replays]);
 
   const replayOptions = useMemo(
-    () => replays.map(replay => ({ value: replay.id, label: formatReplayLabel(replay) })),
+    () => replays.map((replay) => ({ value: replay.id, label: formatReplayLabel(replay) })),
     [replays],
   );
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'stretch',
-        flexDirection: 'column',
-        gap: 10,
-        background: 'rgba(2,6,14,0.68)',
-        border: '1px solid #374151',
-        borderRadius: 8,
-        padding: '10px 14px',
-        fontFamily: 'monospace',
-        boxShadow: '0 12px 32px rgba(0,0,0,0.25)',
-        backdropFilter: 'blur(8px)',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'end', gap: 10 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <label style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-            Minimum időkeret (óra)
-          </label>
-          <input
-            type="number"
-            min="24"
-            value={hours}
-            onChange={(e) => setHours(parseInt(e.target.value) || 24)}
-            style={{
-              background: 'rgba(3,7,18,0.9)',
-              color: '#f3f4f6',
-              padding: '5px 10px',
-              borderRadius: 5,
-              border: '1px solid #4b5563',
-              outline: 'none',
-              width: 92,
-              fontSize: 16,
-              fontFamily: 'monospace',
-            }}
-          />
+    <section className="panel controls-panel">
+      <div className="panel-header">
+        <div>
+          <p className="panel-kicker">Controls</p>
+          <h2 className="panel-title">Run Setup</h2>
         </div>
-        <button
-          onClick={() => onStart(hours)}
-          disabled={isLoading}
-          style={{
-            padding: '9px 18px',
-            background: isLoading ? 'rgba(17,24,39,0.7)' : '#f3f4f6',
-            color: isLoading ? '#9ca3af' : '#030712',
-            border: '1px solid ' + (isLoading ? '#4b5563' : '#f3f4f6'),
-            borderRadius: 6,
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            cursor: isLoading ? 'not-allowed' : 'pointer',
-            fontFamily: 'monospace',
-            boxShadow: isLoading ? 'none' : '0 0 12px rgba(243,244,246,0.25)',
-            transition: 'all 0.2s',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {isLoading ? 'Feldolgozás…' : 'Szimuláció indítása'}
-        </button>
+        <span className="panel-code">Run</span>
       </div>
 
-      <div style={{ height: 1, background: '#374151', opacity: 0.7 }} />
+      <div className="controls-body">
+        <div className="control-meta">
+          <div className="control-meta-block control-meta-block--main">
+            <span className="control-meta-label">Map package</span>
+            <span className="control-meta-item control-meta-item--primary">{mapFilename ?? 'Unknown map'}</span>
+          </div>
+          <div className="control-meta-block">
+            <span className="control-meta-label">Grid</span>
+            <span className="control-meta-item">{mapSize ?? 'N/A'}</span>
+          </div>
+        </div>
 
-      {onUploadMap && (
-        <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-              Egyéni pálya
+        <div className="control-section control-section--card">
+          <div className="section-heading section-heading--stacked">
+            <span className="field-label">Time limit</span>
+            <span className="field-note">Set the mission window before launch.</span>
+          </div>
+          <div className="launch-row">
+            <label className="field-stack field-stack--tight" htmlFor="mission-hours">
+              <span className="control-mini-label">Mission hours</span>
+              <input
+                id="mission-hours"
+                className="control-input"
+                type="number"
+                min="24"
+                value={hours}
+                onChange={(event) => setHours(parseInt(event.target.value, 10) || 24)}
+              />
+              <span className="field-note">Minimum 24 hours</span>
             </label>
+
+            <div className="field-stack field-stack--action">
+              <span className="control-mini-label">Launch</span>
+              <button
+                className="command-button command-button--primary command-button--launch"
+                onClick={() => onStart(hours)}
+                disabled={isLoading}
+              >
+                {isLoading ? 'Loading' : 'Start'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {onUploadMap && (
+          <div className="control-section control-section--card">
+            <div className="section-heading section-heading--stacked">
+              <span className="field-label">Map upload</span>
+              <span className="field-note">Replace the terrain package with a CSV file.</span>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
               accept=".csv"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                if (e.target.files && e.target.files.length > 0) {
-                  onUploadMap?.(e.target.files[0]);
-                  e.target.value = ''; // Reset input so same file can be uploaded again
+              className="sr-only"
+              onChange={(event) => {
+                if (event.target.files && event.target.files.length > 0) {
+                  onUploadMap(event.target.files[0]);
+                  event.target.value = '';
                 }
               }}
             />
+
             <button
+              className="command-button command-button--ghost command-button--full"
               onClick={() => fileInputRef.current?.click()}
               disabled={isLoading}
-              style={{
-                padding: '6px 12px',
-                background: 'transparent',
-                color: isLoading ? '#6b7280' : '#d1d5db',
-                border: '1px dashed ' + (isLoading ? '#4b5563' : '#6b7280'),
-                borderRadius: 6,
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '0.14em',
-                textTransform: 'uppercase',
-                cursor: isLoading ? 'not-allowed' : 'pointer',
-                fontFamily: 'monospace',
-                transition: 'all 0.2s',
-                whiteSpace: 'nowrap',
-                textAlign: 'center',
-              }}
             >
-              Saját pálya feltöltése
+              Upload map
             </button>
           </div>
-          <div style={{ height: 1, background: '#374151', opacity: 0.7 }} />
-        </>
-      )}
+        )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <label style={{ color: '#9ca3af', fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-          Replay archivum ({replays.length})
-        </label>
+        <div className="control-section control-section--card">
+          <div className="section-heading">
+            <div className="section-heading-copy">
+              <span className="field-label">Replays</span>
+              <span className="field-note">Saved mission archives</span>
+            </div>
+            <span className="control-count">{replays.length}</span>
+          </div>
 
-        <div style={{ display: 'flex', gap: 8 }}>
           <select
             value={selectedReplayId}
-            onChange={(e) => setSelectedReplayId(e.target.value)}
+            onChange={(event) => setSelectedReplayId(event.target.value)}
             disabled={!replayOptions.length}
-            style={{
-              flex: 1,
-              background: 'rgba(3,7,18,0.9)',
-              color: '#f3f4f6',
-              padding: '6px 8px',
-              borderRadius: 5,
-              border: '1px solid #4b5563',
-              outline: 'none',
-              fontSize: 12,
-              fontFamily: 'monospace',
-            }}
+            className="control-input control-select"
           >
             {replayOptions.length === 0 ? (
-              <option value="">Nincs mentett szimuláció</option>
+              <option value="">No saved runs</option>
             ) : (
               replayOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -188,65 +158,32 @@ const Controls: React.FC<ControlsProps> = ({
             )}
           </select>
 
-          <button
-            onClick={() => selectedReplayId && onReplay(selectedReplayId)}
-            disabled={!selectedReplayId}
-            style={{
-              padding: '6px 10px',
-              background: selectedReplayId ? '#f3f4f6' : 'rgba(17,24,39,0.7)',
-              color: selectedReplayId ? '#030712' : '#6b7280',
-              border: '1px solid ' + (selectedReplayId ? '#f3f4f6' : '#4b5563'),
-              borderRadius: 5,
-              fontSize: 11,
-              fontWeight: 700,
-              fontFamily: 'monospace',
-              cursor: selectedReplayId ? 'pointer' : 'not-allowed',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Replay
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button
-            onClick={() => selectedReplayId && onDeleteReplay(selectedReplayId)}
-            disabled={!selectedReplayId}
-            style={{
-              padding: '5px 8px',
-              background: 'transparent',
-              border: '1px solid #4b5563',
-              borderRadius: 5,
-              color: selectedReplayId ? '#d1d5db' : '#6b7280',
-              fontSize: 10,
-              fontWeight: 700,
-              fontFamily: 'monospace',
-              cursor: selectedReplayId ? 'pointer' : 'not-allowed',
-            }}
-          >
-            Törlés
-          </button>
-
-          <button
-            onClick={onClearReplays}
-            disabled={!replays.length}
-            style={{
-              padding: '5px 8px',
-              background: 'transparent',
-              border: '1px solid #4b5563',
-              borderRadius: 5,
-              color: replays.length ? '#d1d5db' : '#6b7280',
-              fontSize: 10,
-              fontWeight: 700,
-              fontFamily: 'monospace',
-              cursor: replays.length ? 'pointer' : 'not-allowed',
-            }}
-          >
-            Összes törlése
-          </button>
+          <div className="button-row">
+            <button
+              className="command-button command-button--secondary"
+              onClick={() => selectedReplayId && onReplay(selectedReplayId)}
+              disabled={!selectedReplayId}
+            >
+              Load
+            </button>
+            <button
+              className="command-button command-button--ghost"
+              onClick={() => selectedReplayId && onDeleteReplay(selectedReplayId)}
+              disabled={!selectedReplayId}
+            >
+              Delete
+            </button>
+            <button
+              className="command-button command-button--ghost"
+              onClick={onClearReplays}
+              disabled={!replays.length}
+            >
+              Clear
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 };
 
