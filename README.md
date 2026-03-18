@@ -18,9 +18,9 @@ This repo has:
 ```text
 mars-rover/
 ├── backend/
-│   ├── main.py          # FastAPI app
-│   ├── infer.py         # CLI mission runner
-│   ├── ai.py            # Planner
+│   ├── main.py          # FastAPI app entrypoint
+│   ├── planner_cli.py   # CLI mission runner
+│   ├── rover_backend/   # Planner, API, schemas, map helpers
 │   ├── map.py           # Map generator
 │   ├── mars_map_50x50.csv
 │   ├── mars_maps/       # Generated maps
@@ -95,7 +95,7 @@ Run mission planner from CLI on the default map:
 ```bash
 cd /Users/gergo/Developer/mars-rover/backend
 source ../.venv/bin/activate
-python infer.py --map mars_map_50x50.csv --hours 24 --json
+python planner_cli.py --map mars_map_50x50.csv --hours 24 --json
 ```
 
 Save planner output to a file:
@@ -103,7 +103,7 @@ Save planner output to a file:
 ```bash
 cd /Users/gergo/Developer/mars-rover/backend
 source ../.venv/bin/activate
-python infer.py --map mars_map_50x50.csv --hours 24 --json > ../result.json
+python planner_cli.py --map mars_map_50x50.csv --hours 24 --json > ../result.json
 ```
 
 Run planner on a generated map:
@@ -111,7 +111,7 @@ Run planner on a generated map:
 ```bash
 cd /Users/gergo/Developer/mars-rover/backend
 source ../.venv/bin/activate
-python infer.py --map mars_maps/mars_map_00001.csv --hours 24 --json
+python planner_cli.py --map mars_maps/mars_map_00001.csv --hours 24 --json
 ```
 
 Important:
@@ -207,7 +207,7 @@ Run one full planner smoke test:
 ```bash
 cd /Users/gergo/Developer/mars-rover
 source .venv/bin/activate
-python3 backend/infer.py --map backend/mars_map_50x50.csv --hours 24 --json > /tmp/mars-rover-run.json
+python3 backend/planner_cli.py --map backend/mars_map_50x50.csv --hours 24 --json > /tmp/mars-rover-run.json
 ```
 
 Check frontend build:
