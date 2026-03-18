@@ -2,4 +2,8 @@ backend/__pycache__/*
 .DS_Store
 /backendcopy
 simulations
-
+*.pyc
+pycache
+__pycache__
+*.pyo
+*.pyd
