@@ -1,1 +1,0 @@
-"""Mars rover backend package."""
