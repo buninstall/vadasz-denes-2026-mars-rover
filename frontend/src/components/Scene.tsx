@@ -26,6 +26,8 @@ interface SceneProps {
   photoMode?: boolean;
   hideHudOverlay?: boolean;
   cameraMode?: CameraMode;
+  localPaused?: boolean;
+  setLocalPaused?: (val: boolean) => void;
 }
 
 // ==== SETTINGS ====
@@ -1469,6 +1471,8 @@ const Scene: React.FC<SceneProps> = ({
   photoMode = false,
   hideHudOverlay = false,
   cameraMode = 'follow',
+  localPaused = false,
+  setLocalPaused,
 }) => {
   const stepRef = useRef(0);
   const isMiningRef = useRef(false);
@@ -1493,24 +1497,26 @@ const Scene: React.FC<SceneProps> = ({
   const speedRef = useRef(2);
   useEffect(() => { speedRef.current = speed; }, [speed]);
 
-  const [localPaused, setLocalPaused] = useState(false);
+  const [internalPaused, setInternalPaused] = useState(false);
+  const isPaused = setLocalPaused ? localPaused : internalPaused;
+  const updatePaused = (val: boolean) => setLocalPaused ? setLocalPaused(val) : setInternalPaused(val);
 
   useEffect(() => {
     if (photoMode) {
-      setLocalPaused(true);
+      updatePaused(true);
     }
   }, [photoMode]);
 
   useEffect(() => {
-    isPlayingRef.current = isPlaying && !localPaused && !photoMode;
-  }, [isPlaying, localPaused, photoMode]);
+    isPlayingRef.current = isPlaying && !isPaused && !photoMode;
+  }, [isPlaying, isPaused, photoMode]);
 
   // Reset on new simulation
   useEffect(() => {
     if (!isPlaying || !simulationResult) return;
     stepRef.current = 0;
     isMiningRef.current = false;
-    setLocalPaused(false);
+    updatePaused(false);
     setCollectedStep(0);
     const [row, col] = simulationResult.start;
     roverPosRef.current.set(col * CELL_SIZE - OFFSET, 0, row * CELL_SIZE - OFFSET);
@@ -1650,7 +1656,7 @@ const Scene: React.FC<SceneProps> = ({
 
   const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
   const canPlay = !!simulationResult;
-  const isActivelyPlaying = isPlaying && !localPaused && !photoMode;
+  const isActivelyPlaying = isPlaying && !isPaused && !photoMode;
 
   const miningPosition = useMemo<[number, number, number] | null>(() => {
     if (!isMiningNow || !currentLog?.position) return null;
@@ -1838,7 +1844,7 @@ const Scene: React.FC<SceneProps> = ({
             }}
           >
             <button
-              onClick={() => setLocalPaused(p => !p)}
+              onClick={() => updatePaused(!isPaused)}
               disabled={!isPlaying || photoMode}
               style={{
                 background: isActivelyPlaying ? 'transparent' : '#f3f4f6',
@@ -1852,9 +1858,9 @@ const Scene: React.FC<SceneProps> = ({
                 transition: 'all 0.15s',
                 lineHeight: 1,
               }}
-              title={localPaused ? 'Resume' : 'Pause'}
+              title={isPaused ? 'Resume' : 'Pause'}
             >
-              {localPaused || !isActivelyPlaying ? '▶' : '⏸'}
+              {isPaused || !isActivelyPlaying ? '▶' : '⏸'}
             </button>
           </div>
         </div>

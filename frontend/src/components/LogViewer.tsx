@@ -56,6 +56,7 @@ const getActionCopy = (entry: TimelineEntry) => {
 
 const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep, onJumpToStep }) => {
   const [filter, setFilter] = useState<LogFilter>('events');
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const visibleLogs: TimelineEntry[] = useMemo(() => {
@@ -92,45 +93,57 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep, on
   }, [visibleLogs.length, currentStep]);
 
   return (
-    <section className="panel log-panel">
+    <section className={`panel log-panel flex flex-col ${isCollapsed ? 'shrink-0 !pb-2 !min-h-0' : 'flex-1 h-full min-h-0'}`}>
       <div className="panel-header">
-        <div>
-          <p className="panel-kicker">Log</p>
-          <h2 className="panel-title">Timeline</h2>
+        <div className="flex items-center gap-2">
+          <div>
+            <p className="panel-kicker">Log</p>
+            <h2 className="panel-title m-0">Timeline</h2>
+          </div>
+          <button onClick={() => setIsCollapsed(!isCollapsed)} className="cursor-pointer hover:opacity-80 p-1 bg-transparent border-none mt-1">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 className={`text-gray-500 transition-transform duration-200 ${isCollapsed ? 'rotate-180' : 'rotate-0'}`}>
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
         </div>
-        <div className="dashboard-flags">
-          <span className={`status-pill ${simulationResult ? 'status-pill--live' : ''}`}>
-            {simulationResult ? 'Live' : 'Idle'}
-          </span>
-          <span className="status-pill">{visibleLogs.length} entries</span>
-        </div>
+        {!isCollapsed && (
+          <div className="dashboard-flags shrink-0">
+            <span className={`status-pill ${simulationResult ? 'status-pill--live' : ''}`}>
+              {simulationResult ? 'Live' : 'Idle'}
+            </span>
+            <span className="status-pill">{visibleLogs.length} entries</span>
+          </div>
+        )}
       </div>
 
-      <div className="log-toolbar">
-        <button
-          type="button"
-          className={`log-filter ${filter === 'events' ? 'log-filter--active' : ''}`}
-          onClick={() => setFilter('events')}
-        >
-          Events
-        </button>
-        <button
-          type="button"
-          className={`log-filter ${filter === 'all' ? 'log-filter--active' : ''}`}
-          onClick={() => setFilter('all')}
-        >
-          Stream
-        </button>
-        <button
-          type="button"
-          className={`log-filter ${filter === 'samples' ? 'log-filter--active' : ''}`}
-          onClick={() => setFilter('samples')}
-        >
-          Samples
-        </button>
-      </div>
+      {!isCollapsed && (
+        <>
+          <div className="log-toolbar shrink-0">
+            <button
+              type="button"
+              className={`log-filter ${filter === 'events' ? 'log-filter--active' : ''}`}
+              onClick={() => setFilter('events')}
+            >
+              Events
+            </button>
+            <button
+              type="button"
+              className={`log-filter ${filter === 'all' ? 'log-filter--active' : ''}`}
+              onClick={() => setFilter('all')}
+            >
+              Stream
+            </button>
+            <button
+              type="button"
+              className={`log-filter ${filter === 'samples' ? 'log-filter--active' : ''}`}
+              onClick={() => setFilter('samples')}
+            >
+              Samples
+            </button>
+          </div>
 
-      <div className="log-scroll" ref={scrollRef}>
+          <div className="log-scroll flex-1 overflow-y-auto !max-h-none" ref={scrollRef}>
         {visibleLogs.length === 0 ? (
           <div className="log-empty">No data yet.</div>
         ) : (
@@ -174,7 +187,9 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep, on
             );
           })
         )}
-      </div>
+        </div>
+      </>
+      )}
     </section>
   );
 };

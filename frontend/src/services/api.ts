@@ -16,6 +16,7 @@ export interface SimulationSummary {
   success: boolean;
   mineralsCollected: number;
   totalMinerals: number;
+  savedStep: number;
 }
 
 export interface SimulationRecord {
@@ -24,6 +25,7 @@ export interface SimulationRecord {
   hours: number;
   mapFile: string;
   mapGrid: string[][];
+  savedStep: number;
   result: SimulationResult;
 }
 
@@ -108,5 +110,9 @@ export const simulationApi = {
 
   clearSimulations: async (): Promise<void> => {
     await api.delete('/simulations');
+  },
+
+  updateSimulationStep: async (id: string, step: number): Promise<void> => {
+    await api.patch(`/simulations/${id}/step`, { currentStep: step });
   },
 };

@@ -67,6 +67,7 @@ export default function App() {
     comparisonRuns,
     restoreSimulation,
     resetSimulation,
+    saveSimulationStep,
   } = useSimulation();
 
   const [isLoaded, setIsLoaded] = useState(false);
@@ -79,7 +80,19 @@ export default function App() {
 
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [photoMode, setPhotoMode] = useState(false);
+  const [localPaused, setLocalPaused] = useState(false);
+  const [keepSessionOnExit, setKeepSessionOnExit] = useState(false);
   const [savedSession, setSavedSession] = useState<any>(null);
+  const [showSavedSimulations, setShowSavedSimulations] = useState(false);
+  const [pendingJumpStep, setPendingJumpStep] = useState<number | null>(null);
+
+  // Mark loaded if we are already in simulation
+  useEffect(() => {
+    if (map && simulationResult) {
+      setIsLoaded(true);
+    }
+  }, [map, simulationResult]);
 
   useEffect(() => {
     try {
@@ -94,19 +107,32 @@ export default function App() {
     } catch (e) {
       console.error('Failed to parse saved session', e);
     }
-  }, []);
+  }, []); // Only run once on mount! Removed loadMap dependency to avoid infinite loops if loadMap changes.
 
   useEffect(() => {
-    if (simulationResult && map && !showResumePrompt) {
+    if (map && !showResumePrompt) {
+      if (keepSessionOnExit) setKeepSessionOnExit(false);
       localStorage.setItem('mars_rover_saved_session', JSON.stringify({
         map,
         simulationResult,
         currentStep
       }));
-    } else if (!simulationResult) {
+    } else if (!map && !keepSessionOnExit) {
       localStorage.removeItem('mars_rover_saved_session');
     }
-  }, [simulationResult, map, currentStep, showResumePrompt]);
+  }, [simulationResult, map, currentStep, showResumePrompt, keepSessionOnExit]);
+
+  // Handle refresh warning
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (map) {
+        e.preventDefault();
+        e.returnValue = ''; // Trigger browser built-in dialog
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [map]);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastMiningSoundStepRef = useRef(-1);
@@ -174,11 +200,17 @@ export default function App() {
 
   useEffect(() => {
     if (simulationResult) {
-      setCurrentStep(0);
-      setStepOverride(0);
+      if (pendingJumpStep !== null) {
+        setCurrentStep(pendingJumpStep);
+        setStepOverride(pendingJumpStep);
+        setPendingJumpStep(null);
+      } else {
+        setCurrentStep(0);
+        setStepOverride(0);
+      }
       setReportDismissed(false);
     }
-  }, [simulationResult]);
+  }, [simulationResult, pendingJumpStep]);
 
   useEffect(() => {
     if (!currentLog || currentLog.step === lastMiningSoundStepRef.current) return;
@@ -243,6 +275,55 @@ export default function App() {
     );
   }
 
+  if (showSavedSimulations) {
+    return (
+      <div className="boot-screen boot-screen--standalone">
+        <div className="boot-grid">
+          <div className="boot-panel">
+            <h1 className="boot-title">PREVIOUS SIMULATIONS</h1>
+            <p style={{ color: '#9ca3af', marginBottom: 24, fontSize: '0.95rem' }}>Select a past simulation to load or resume.</p>
+            
+            <div className="flex flex-col gap-2 max-h-[40vh] overflow-y-auto mb-6 pr-2 custom-scrollbar">
+              {replays.length === 0 ? (
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', fontStyle: 'italic' }}>No saved simulations found.</p>
+              ) : (
+                replays.map(r => {
+                  const date = new Date(r.createdAt);
+                  const hh = date.getHours().toString().padStart(2, '0');
+                  const mm = date.getMinutes().toString().padStart(2, '0');
+                  return (
+                    <button 
+                      key={r.id}
+                      className="command-button command-button--ghost text-left flex justify-between items-center"
+                      style={{ padding: '12px 16px', background: 'rgba(255,255,255,0.03)' }}
+                      onClick={() => {
+                        setPendingJumpStep(r.savedStep || 0);
+                        loadReplay(r.id);
+                        setShowSavedSimulations(false);
+                      }}
+                    >
+                      <span className="font-mono text-sm">{date.toLocaleDateString()} {hh}:{mm}</span>
+                      <span className="text-xs text-gray-500">Step {r.savedStep || 0} / {r.result.steps_used}</span>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="boot-actions">
+              <button
+                className="command-button command-button--secondary boot-choice-btn"
+                onClick={() => setShowSavedSimulations(false)}
+              >
+                Back to Menu
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!map) {
     const statusText = loading ? 'FETCHING TERRAIN PACKAGE' : 'SELECT STARTUP MAP SOURCE';
     const stateText = loading ? 'SYNCING BACKEND' : 'AWAITING COMMAND';
@@ -293,6 +374,16 @@ export default function App() {
               </button>
             </div>
 
+            <div className="boot-actions" style={{ marginTop: 24, paddingTop: 24, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <button
+                className="command-button command-button--ghost boot-choice-btn"
+                onClick={() => setShowSavedSimulations(true)}
+                disabled={loading}
+              >
+                Previous simulations
+              </button>
+            </div>
+
             {mapLoadError && <p className="boot-error">{mapLoadError}</p>}
 
             <div className="boot-footer">
@@ -324,22 +415,30 @@ export default function App() {
           pointerEvents: isLoaded ? 'auto' : 'none',
         }}
       >
-        <Scene
-          map={map}
-          simulationResult={simulationResult}
-          isPlaying={isPlaying}
-          stepDurationSec={0.06}
-          onStep={handleStep}
-          onComplete={handleComplete}
-          stepOverride={stepOverride}
-          cameraMode={cameraMode}
-        />
+        {map && (
+          <Scene
+            map={map}
+            simulationResult={simulationResult}
+            isPlaying={isPlaying}
+            stepDurationSec={0.06}
+            onStep={handleStep}
+            onComplete={handleComplete}
+            stepOverride={stepOverride}
+            cameraMode={cameraMode}
+            hideHudOverlay={photoMode}
+            localPaused={localPaused}
+            setLocalPaused={setLocalPaused}
+          />
+        )}
       </div>
 
       {isLoaded && (
-        <div className="mission-shell">
-          <div className="mission-column mission-column--primary">
-            <div className="pointer-events-auto">
+        <div 
+          className="mission-shell transition-opacity duration-300 pointer-events-none"
+          style={{ opacity: photoMode ? 0 : 1 }}
+        >
+          <div className="mission-column mission-column--primary flex flex-col h-screen py-4 pointer-events-none">
+            <div className="pointer-events-auto shrink-0 mb-3">
               <Dashboard
                 simulationResult={simulationResult}
                 currentStep={currentStep}
@@ -348,10 +447,11 @@ export default function App() {
                 onCameraModeChange={setCameraMode}
                 onExit={() => setShowExitConfirm(true)}
                 onJumpToStep={handleJumpToStep}
+                onEnterPhotoMode={() => setPhotoMode(true)}
               />
             </div>
 
-            <div className="pointer-events-auto">
+            <div className="pointer-events-auto mt-auto w-full flex flex-col min-h-0 overflow-hidden" style={{ maxHeight: '75vh' }}>
               <LogViewer simulationResult={simulationResult} currentStep={currentStep} onJumpToStep={handleJumpToStep} />
             </div>
           </div>
@@ -375,12 +475,64 @@ export default function App() {
       )}
 
       {isLoaded && (
-        <Minimap
-          map={map}
-          simulationResult={simulationResult}
-          currentStep={currentStep}
-          comparisonRuns={comparisonRuns}
-        />
+        <div style={{ opacity: photoMode ? 0 : 1, transition: 'opacity 0.3s' }}>
+          <Minimap
+            map={map}
+            simulationResult={simulationResult}
+            currentStep={currentStep}
+            comparisonRuns={comparisonRuns}
+          />
+        </div>
+      )}
+
+      {photoMode && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[9999]">
+          <div className="flex items-center gap-4 bg-black/60 backdrop-blur-md border border-white/20 rounded-full py-2 px-6 shadow-2xl">
+            {/* Play/Pause */}
+            <button 
+              className="text-white hover:text-[#10b981] transition-colors"
+              onClick={() => setLocalPaused(!localPaused)}
+              title={localPaused || !isPlaying ? "Restore Time" : "Halt Time"}
+            >
+              {localPaused || !isPlaying ? (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              ) : (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+              )}
+            </button>
+            <div className="w-[1px] h-6 bg-white/20" />
+            
+            {/* Camera Modes */}
+            <div className="flex gap-2">
+              <button 
+                className={`text-xs uppercase font-bold px-3 py-1 rounded-full transition-colors ${cameraMode === 'follow' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'}`}
+                onClick={() => setCameraMode('follow')}
+              >Follow</button>
+              <button 
+                className={`text-xs uppercase font-bold px-3 py-1 rounded-full transition-colors ${cameraMode === 'top' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'}`}
+                onClick={() => setCameraMode('top')}
+              >Top</button>
+              <button 
+                className={`text-xs uppercase font-bold px-3 py-1 rounded-full transition-colors ${cameraMode === 'detached' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'}`}
+                onClick={() => setCameraMode('detached')}
+              >Free</button>
+            </div>
+            
+            <div className="w-[1px] h-6 bg-white/20" />
+            
+            {/* Exit Photo Mode */}
+            <button
+              className="text-gray-400 hover:text-[#ef4444] transition-colors flex items-center gap-2 text-xs uppercase font-bold"
+              onClick={() => setPhotoMode(false)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="9" y1="3" x2="9" y2="21"></line>
+              </svg>
+              Exit
+            </button>
+          </div>
+        </div>
       )}
 
       {showPostMissionReport && simulationResult && (
@@ -399,16 +551,29 @@ export default function App() {
             <div className="boot-panel">
               <h1 className="boot-title" style={{ color: '#ef4444' }}>ABORT MISSION?</h1>
               <p style={{ color: '#9ca3af', marginBottom: 24, fontSize: '0.95rem' }}>Are you sure you want to end the current simulation and return to the main menu? Unsaved progress will be tracked by auto-save.</p>
-              <div className="boot-actions">
+              <div className="boot-actions flex-col sm:flex-row">
                 <button
                   className="command-button command-button--primary boot-choice-btn"
-                  style={{ background: '#dc2626', borderColor: '#ef4444' }}
-                  onClick={() => {
+                  style={{ background: '#10b981', borderColor: '#34d399' }}
+                  onClick={async () => {
+                    setKeepSessionOnExit(true);
+                    await saveSimulationStep(currentStep);
                     resetSimulation();
                     setShowExitConfirm(false);
                   }}
                 >
-                  Yes, Abort
+                  Save & Exit to Menu
+                </button>
+                <button
+                  className="command-button command-button--primary boot-choice-btn"
+                  style={{ background: '#dc2626', borderColor: '#ef4444' }}
+                  onClick={() => {
+                    localStorage.removeItem('mars_rover_saved_session');
+                    resetSimulation();
+                    setShowExitConfirm(false);
+                  }}
+                >
+                  Discard & Exit
                 </button>
                 <button
                   className="command-button command-button--secondary boot-choice-btn"

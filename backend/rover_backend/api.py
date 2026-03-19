@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import DEFAULT_MAP_PATH, SIMULATIONS_DIR, UPLOADS_DIR
 from .mission import GRID_SIZE
 from .maps import find_start_point, load_map_from_csv, pick_map_path, prepare_runtime_map, resolve_map_path
-from .schemas import SimulationRequest
+from .schemas import SimulationRequest, UpdateStepRequest
 from .simulation import run_simulation
 
 app = FastAPI()
@@ -143,12 +143,14 @@ def start_simulation(request: SimulationRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     sim_id = uuid.uuid4().hex
+    result["sim_id"] = sim_id
     sim_record = {
         "id": sim_id,
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "hours": request.time_limit_hours,
         "mapFile": request.map_file,
         "mapGrid": load_map_from_csv(map_path),
+        "savedStep": 0,
         "result": result,
     }
     with _simulation_path(sim_id).open("w") as handle:
@@ -174,6 +176,7 @@ def list_simulations():
                 "success": data.get("result", {}).get("success", False),
                 "mineralsCollected": len(data.get("result", {}).get("minerals", [])),
                 "totalMinerals": data.get("result", {}).get("total_minerals", 0),
+                "savedStep": data.get("savedStep", 0),
             }
         )
 
@@ -186,6 +189,23 @@ def get_simulation(sim_id: str):
     if record is None:
         raise HTTPException(status_code=404, detail="Simulation not found")
     return record
+
+
+@app.patch("/simulations/{sim_id}/step")
+def update_simulation_step(sim_id: str, request: UpdateStepRequest):
+    file_path = _simulation_path(sim_id)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    
+    with file_path.open("r") as f:
+        data = json.load(f)
+        
+    data["savedStep"] = request.currentStep
+    
+    with file_path.open("w") as f:
+        json.dump(data, f)
+        
+    return {"status": "ok", "savedStep": request.currentStep}
 
 
 @app.delete("/simulations/{sim_id}")

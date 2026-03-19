@@ -10,6 +10,17 @@ export const useSimulation = () => {
   const [replays, setReplays] = useState<ReplayEntry[]>([]);
   const [comparisonRuns, setComparisonRuns] = useState<ComparisonRun[]>([]);
   const [mapSource, setMapSource] = useState<ActiveMapSource>('random');
+  const [currentSimId, setCurrentSimId] = useState<string | null>(null);
+
+  const saveSimulationStep = useCallback(async (step: number) => {
+    if (currentSimId) {
+      try {
+        await simulationApi.updateSimulationStep(currentSimId, step);
+      } catch (err) {
+        console.error('Failed to save simulation step:', err);
+      }
+    }
+  }, [currentSimId]);
 
   const registerComparisonRun = useCallback((result: SimulationResult, label: string, runId?: string) => {
     const id = runId ?? `live-${Date.now()}`;
@@ -35,6 +46,7 @@ export const useSimulation = () => {
       setMap(mapData);
       setMapSource(source);
       setSimulationResult(null);
+      setCurrentSimId(null);
       setIsPlaying(false);
       return mapData;
     } finally {
@@ -51,6 +63,7 @@ export const useSimulation = () => {
         id: s.id,
         createdAt: s.createdAt,
         hours: s.hours,
+        savedStep: s.savedStep,
         mapGrid: [], // loaded on demand when replaying
         result: {
           path: [],
@@ -78,6 +91,7 @@ export const useSimulation = () => {
     setLoading(true);
     setIsPlaying(false);
     setSimulationResult(null);
+    setCurrentSimId(null);
 
     try {
       if (!map) {
@@ -86,6 +100,7 @@ export const useSimulation = () => {
 
       const data = await simulationApi.startSimulation(hours, map.filename);
       setSimulationResult(data);
+      setCurrentSimId(data.sim_id || null);
       setIsPlaying(true);
       registerComparisonRun(data, `Live ${new Date().toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' })}`);
 
@@ -105,6 +120,7 @@ export const useSimulation = () => {
       setMap(newMap);
       setMapSource('custom');
       setSimulationResult(null);
+      setCurrentSimId(null);
       setIsPlaying(false);
     } catch (error) {
       console.error('Failed to upload map', error);
@@ -119,6 +135,7 @@ export const useSimulation = () => {
       setLoading(true);
       const record = await simulationApi.getSimulation(replayId);
       setSimulationResult(record.result);
+      setCurrentSimId(record.id);
       if (record.mapGrid && record.mapGrid.length > 0) {
         let replayStart: [number, number] | null = null;
         if (Array.isArray(record.result.start) && record.result.start.length === 2) {
@@ -184,12 +201,14 @@ export const useSimulation = () => {
   const restoreSimulation = useCallback((savedMap: MapData, savedResult: SimulationResult) => {
     setMap(savedMap);
     setSimulationResult(savedResult);
+    setCurrentSimId(savedResult.sim_id || null);
     setIsPlaying(false);
   }, []);
 
   const resetSimulation = useCallback(() => {
     setMap(null);
     setSimulationResult(null);
+    setCurrentSimId(null);
     setIsPlaying(false);
   }, []);
 
@@ -214,5 +233,7 @@ export const useSimulation = () => {
     uploadCustomMap,
     resetSimulation,
     restoreSimulation,
+    currentSimId,
+    saveSimulationStep,
   };
 };

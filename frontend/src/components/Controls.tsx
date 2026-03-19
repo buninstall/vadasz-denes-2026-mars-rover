@@ -34,6 +34,7 @@ const Controls: React.FC<ControlsProps> = ({
 }) => {
   const [hoursInput, setHoursInput] = useState('24');
   const [selectedReplayId, setSelectedReplayId] = useState('');
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -52,14 +53,23 @@ const Controls: React.FC<ControlsProps> = ({
   return (
     <section className="panel controls-panel controls-panel--compact">
       <div className="panel-header">
-        <div>
-          <p className="panel-kicker">Controls</p>
-          <h2 className="panel-title">Run</h2>
+        <div className="flex items-center gap-2">
+          <div>
+            <p className="panel-kicker">Controls</p>
+            <h2 className="panel-title m-0">Run</h2>
+          </div>
+          <button onClick={() => setIsCollapsed(!isCollapsed)} className="cursor-pointer hover:opacity-80 p-1 bg-transparent border-none mt-1">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 className={`text-gray-500 transition-transform duration-200 ${isCollapsed ? 'rotate-180' : 'rotate-0'}`}>
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
         </div>
-        <span className="panel-code">Run</span>
+        {!isCollapsed && <span className="panel-code">Run</span>}
       </div>
 
-      <div className="controls-body">
+      {!isCollapsed && (
+        <div className="controls-body">
         <p className="controls-inline-meta">
           {mapFilename ?? 'Unknown map'} • {mapSize ?? 'N/A'}
         </p>
@@ -178,6 +188,7 @@ const Controls: React.FC<ControlsProps> = ({
           </div>
         </div>
       </div>
+      )}
     </section>
   );
 };

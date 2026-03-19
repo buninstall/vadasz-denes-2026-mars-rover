@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ComparisonRun, MapData, SimulationResult } from '../types';
 
 interface MinimapProps {
@@ -29,6 +29,7 @@ const Minimap: React.FC<MinimapProps> = ({
   comparisonRuns = [],
   showEnergyHeatmap = false,
 }) => {
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const staticCanvas = useMemo(() => {
@@ -229,28 +230,29 @@ const Minimap: React.FC<MinimapProps> = ({
 
   return (
     <div className="minimap-shell">
-      <section className="panel minimap-panel">
+      <section className={`panel minimap-panel ${isCollapsed ? 'pb-2' : ''}`}>
         <div className="panel-header minimap-header">
-          <div>
-            <p className="panel-kicker">Map</p>
-            <h2 className="panel-title">Overview</h2>
-          </div>
-          <div className="minimap-summary">
-            <span className="minimap-summary-item">
-              R{currentPosition[0]} C{currentPosition[1]}
-            </span>
-            <span className="minimap-summary-item">
-              {simulationResult ? `${collectedCount}/${totalMinerals}` : 'Idle'}
-            </span>
-            <span className="minimap-summary-item">{comparisonRuns.length} ghosts</span>
+          <div className="flex items-center gap-2">
+            <div>
+              <p className="panel-kicker">Map</p>
+              <h2 className="panel-title m-0">Overview</h2>
+            </div>
+            <button onClick={() => setIsCollapsed(!isCollapsed)} className="cursor-pointer hover:opacity-80 p-1 bg-transparent border-none mt-1">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                   className={`text-gray-500 transition-transform duration-200 ${isCollapsed ? 'rotate-180' : 'rotate-0'}`}>
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
           </div>
         </div>
 
-        <div className="minimap-frame">
-          <canvas ref={canvasRef} width={W} height={H} className="minimap-canvas" />
-        </div>
+        {!isCollapsed && (
+          <>
+            <div className="minimap-frame">
+              <canvas ref={canvasRef} width={W} height={H} className="minimap-canvas" />
+            </div>
 
-        <div className="minimap-footer">
+            <div className="minimap-footer">
           {simulationResult && (
             <div className="minimap-progress-row">
               <span className="field-label">Progress</span>
@@ -280,6 +282,8 @@ const Minimap: React.FC<MinimapProps> = ({
           ))}
           </div>
         </div>
+        </>
+        )}
       </section>
     </div>
   );

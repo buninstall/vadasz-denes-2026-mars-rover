@@ -70,6 +70,7 @@ export interface SimulationResult {
   start: [number, number];
   all_minerals: Record<string, string>;
   logs: SimLogEntry[];
+  sim_id?: string;
 }
 
 export interface ReplayEntry {
@@ -78,7 +79,9 @@ export interface ReplayEntry {
   hours: number;
   mapGrid: BlockType[][];
   result: SimulationResult;
+  savedStep: number;
 }
+
 
 export interface ComparisonRun {
   id: string;
