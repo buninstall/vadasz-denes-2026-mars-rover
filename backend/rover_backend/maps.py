@@ -121,14 +121,18 @@ def find_start_point(grid: list[list[str]]) -> tuple[int, int]:
     return starts[0]
 
 
-def prepare_runtime_map(source_map: str | Path) -> tuple[Path, list[list[str]]]:
+def prepare_runtime_map(
+    source_map: str | Path,
+    randomize_start: bool = True,
+) -> tuple[Path, list[list[str]]]:
     source_path = Path(source_map)
     grid = load_map_from_csv(source_path)
     if grid is None:
         raise FileNotFoundError(f"Map file '{source_path}' not found")
 
-    runtime_grid = randomize_start_point(grid)
-    runtime_filename = f"runtime_{source_path.stem}_{random.getrandbits(48):012x}.csv"
+    runtime_grid = randomize_start_point(grid) if randomize_start else [row.copy() for row in grid]
+    filename_prefix = "runtime" if randomize_start else "upload"
+    runtime_filename = f"{filename_prefix}_{source_path.stem}_{random.getrandbits(48):012x}.csv"
     runtime_path = RUNTIME_MAPS_DIR / runtime_filename
     write_map_to_csv(runtime_grid, runtime_path)
 

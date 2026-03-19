@@ -1,17 +1,23 @@
 # Projekt Bemutató Narráció (Mars Rover 2026)
 
 ## 1. Az algoritmus alapfilozófiája
-Ebben a projektben egy olyan autonóm útvonaltervezőt alkottunk meg, amely a biztonság és a hatékonyság egyensúlyát tartja szem előtt. A szoftver nem egyszerűen a legközelebbi ásványt veszi célba, hanem egy klaszter-alapú pontozási rendszert használ. Ez azt jelenti, hogy a rendszer folyamatosan értékeli a környező ásványok sűrűségét, és oda navigálja a rovert, ahol a legkevesebb energia befektetéssel a legtöbb mintát ásványt be.
+Ebben a projektben egy olyan autonóm útvonaltervezőt alkottunk meg, amely a biztonság és a hatékonyság egyensúlyát tartja szem előtt. A szoftver nem egyszerűen a legközelebbi ásványt veszi célba, hanem klaszter-alapú pontozási rendszert használ. A rendszer a környező ásványok sűrűségét, klaszterméretét, a peremhelyzetet (frontier), valamint az oda-vissza út energia- és időigényét együtt értékeli.
 
 ## 2. Miért "hagy ki" ásványokat a rover?
-A videón látható, hogy a rover néha elhalad ásványok mellett anélkül, hogy felvenné őket. Ez nem hiba, hanem a tervezett optimalizáció eredménye. A rendszer három sebességi fokozatot használ. Amikor a rover 2-es vagy 3-as sebességgel halad át egy cellán, a fizikai korlátok miatt csak a mozgás végpontján tud mintát venni. 
+A videón látható, hogy a rover néha elhalad ásványok mellett anélkül, hogy felvenné őket. Ez a tervezett optimalizáció következménye. A rendszer három sebességi fokozatot használ, és 2-es vagy 3-as sebességnél fél óra alatt több cellát léphet, így csak az aktuális félórás mozgás végén tud bányászni.
 
-A szoftver ilyenkor egy döntési mátrix alapján mérlegel: ha a megállás és az újraindulás több energiát fogyasztana, mint amennyit az adott ásvány ér abban a pillanatban, akkor a rendszer inkább fenntartja a rover lendületét a távolabbi, értékesebb célpont felé. Később, egy másik útvonalon visszatérve, sokkal hatékonyabban tudja majd begyűjteni a maradékot.
+A döntésnél a rendszer nem ásványtípus-értéket súlyoz, hanem főleg útvonal- és klaszterjellemzőket (közelség, sűrűség, visszaút-biztonság). Emiatt előfordul, hogy lokálisan „kihagy” egy ásványt, ha a teljes küldetés szempontjából másik célpontot ítél jobbnak.
 
 ## 3. Akkumulátor és éjszakai stratégia
-A rover egyik legkritikusabb modulja az energiamenedzsment. A fogyasztás a sebesség négyzetével arányos ($E=2 \cdot v^2$), így a 3-as sebesség kilencszer annyi energiát igényel, mint az 1-es. A program kalkulál a marsi nappalok és éjszakák váltakozásával is. 
+A rover egyik legkritikusabb modulja az energiamenedzsment. A fogyasztás a sebesség négyzetével arányos ($E=2 \cdot v^2$), így a 3-as sebesség kilencszer annyi energiát igényel, mint az 1-es. A rendszer nappal +10 egységet tölt félóránként, éjjel nem tölt.
 
-Ha a rendszer azt látja, hogy a rover éjszaka merülne le egy veszélyes zónában, akkor inkább "Standby" módba kapcsolja az egységet, és megvárja a napfelkeltét a töltéshez. Ez a konzervatív stratégia garantálja, hogy a gép ne ragadjon a sötétben, és mindig legyen elég tartaléka a biztonságos visszatéréshez a kiinduló pontra.
+Ha egy lépés energetikailag nem biztonságos, a rover tud várakozni (standby), főleg nappali töltés reményében. Fontos: a jelenlegi implementáció célja a biztonságos visszatérés, de ez nem minden pályán garantált; időkeret mellett előfordulhat, hogy a rover nem ér vissza a startpontra.
 
-## 4. Összegzés
-A végeredmény egy olyan intelligens vezérlés, amely képes 100%-os hatékonysággal begyűjti az ásványokat a megadott időkereten belül, miközben dinamikusan alkalmazkodik a változó energiaviszonyokhoz és az akadályokhoz.
+## 4. Megjegyzések és kérdések (audit alapján)
+- **Megjegyzés:** A jelenlegi kódban a „mission successful” feltétel engedi a 0.0 végső akkumulátort is (nem lehet negatív, de lehet nulla).
+- **Kérdés a zsűrihez:** Elfogadott-e az az értelmezés, hogy nappal egy akció akkor is végrehajtható, ha a lépés elején az akkumulátor önmagában nem fedezné a fogyasztást, de a félórás nappali töltéssel együtt a nettó energia nem lesz negatív?
+- **Megjegyzés:** Van ismert edge case, amikor az aktuális célpont megtartása miatt idő végére nem ér vissza a rover, noha az energia modell helyes.
+- **Megjegyzés:** A `passable_cells` paraméter jelenleg cache-kulcsban szerepel, de az A* útkeresés tényleges bejárását nem befolyásolja.
+
+## 5. Összegzés
+A végeredmény egy olyan intelligens vezérlés, amely dinamikusan alkalmazkodik az energiahelyzethez és az akadályokhoz, és a rendelkezésre álló időben igyekszik maximalizálni a begyűjtött ásványok számát, majd visszatérni a kiinduló pontra.

@@ -58,22 +58,26 @@ def run_simulation(
     max_steps = min(MAX_SIMULATION_STEPS, time_budget_steps)
 
     def should_wait_for_day() -> bool:
-        if battery <= 0 or step >= max_steps:
+        if step >= max_steps:
             return False
 
         if planner._is_day(step):
-            return battery < MAX_BATTERY
+            return battery < MAX_BATTERY and planner.can_standby(battery, step)
 
         steps_until_day = CYCLE - (step % CYCLE)
         if step + steps_until_day >= max_steps:
             return False
 
-        return battery > steps_until_day
+        return battery >= steps_until_day
 
     def standby(reason: str) -> bool:
         nonlocal battery, step, termination_reason
 
         if step >= max_steps:
+            return False
+
+        if not planner.can_standby(battery, step):
+            termination_reason = reason
             return False
 
         battery = planner._standby_battery(battery, step)
@@ -82,16 +86,15 @@ def run_simulation(
         battery_log.append(round(battery, 2))
         logs.append(_build_log_entry(step, pos, battery, 0, total_distance, [], "standby"))
 
-        if battery <= 0:
-            termination_reason = reason
-            return False
-
         return True
 
     def mine_current_position() -> bool:
-        nonlocal battery, step, termination_reason
+        nonlocal battery, step
 
         if pos not in remaining_minerals or step >= max_steps:
+            return False
+
+        if not planner.can_mine(battery, step):
             return False
 
         battery = planner._mine_battery(battery, step)
@@ -111,16 +114,20 @@ def run_simulation(
         battery_log.append(round(battery, 2))
         logs.append(_build_log_entry(step, pos, battery, 0, total_distance, [mineral_type], "mine"))
 
-        if battery <= 0:
-            termination_reason = "battery_depleted_mining"
-
         return True
 
     while step < max_steps:
+        if pos in remaining_minerals and not planner.can_mine(battery, step):
+            if should_wait_for_day():
+                if not standby("battery_depleted_waiting_to_mine"):
+                    break
+                continue
+
+            termination_reason = "no_safe_mining"
+            break
+
         if mine_current_position():
             active_target = None
-            if termination_reason == "battery_depleted_mining":
-                break
             continue
 
         if (
@@ -229,10 +236,6 @@ def run_simulation(
 
         pos = new_pos
 
-        if battery <= 0:
-            termination_reason = "battery_depleted"
-            break
-
         if pos == target:
             if target == mission.start_pos and not remaining_minerals:
                 termination_reason = "completed"
@@ -246,7 +249,7 @@ def run_simulation(
     returned_home = pos == mission.start_pos
     mission_success = (
         returned_home
-        and battery > 0
+        and battery >= 0
         and step <= max_steps
         and (all_collected if collect_all else True)
     )

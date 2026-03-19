@@ -8,8 +8,9 @@ Projektünkben egy többszempontú optimalizációs modellt alkalmaztunk, amely 
 
 ### Főbb szempontok:
 - **Dinamikus sebességkezelés:** $v \in \{1, 2, 3\}$ sebességfokozatok használata az energiahatékonyság ($E = 2 \cdot v^2$) és az időkeret függvényében.
-- **Klaszter-alapú pontozás:** Az ásványokat nem egyenként, hanem sűrűség és típus (érték) alapján súlyozott klaszterekként kezeli a rendszerünk.
-- **Biztonsági tartalék:** Folyamatos kalkuláció a bázisra való visszatéréshez szükséges minimális energiáról.
+- **Klaszter-alapú pontozás:** Az ásványokat nem egyenként, hanem klaszterjellemzők (sűrűség, klaszterméret, frontier/perem) alapján pontozzuk.
+- **Energia- és visszaút-ellenőrzés:** Célpontválasztáskor és mozgáskor a rendszer számol az oda-vissza út várható energiaigényével és az időkorláttal.
+- **Fontos pontosítás:** A jelenlegi implementációban a B/Y/G ásványtípusok azonos értékűek a pontozásban (nincs külön típus-súlyozás).
 
 ---
 
@@ -21,23 +22,27 @@ Függvény Küldetés_Szimuláció(Térkép, Időkeret):
     Akkumulátor = 100
     Összes_Ásvány = Térkép.Ásványok_Listája()
 
-    Amíg Idő < Időkeret ÉS Pozíció != Bázis:
+    Amíg Idő < Időkeret ÉS (Van_Még_Ásvány() VAGY Pozíció != Bázis):
         # 1. Célpont kiválasztása
         Célpont = Legjobb_Klaszter_Keresése(Rover_Pozíció, Akkumulátor, Idő)
+        Ha Célpont nincs:
+            Célpont = Bázis
         
         # 2. Útvonaltervezés (A*)
         Útvonal = Tervezés_A_Csillag(Rover_Pozíció, Célpont)
         
         # 3. Mozgás végrehajtása sebesség-optimalizálással
-        Minden lépés az Útvonalon:
-            Ha Éjszaka_Van ÉS Akkumulátor < Biztonsági_Szint:
-                Várakozás_Nappalig() (Standby mód)
+        Minden félórás ciklusban:
+            Ha az aktuális pozíción ásvány van ÉS a bányászás biztonságos:
+                Akkumulátor = clamp(Akkumulátor - 2 + NappaliTöltés, 0, 100)
+                Ásvány_Begyűjtése()
             Egyébként:
                 V választása {1, 2, 3} alapján (Energia vs. Idő)
-                Mozgás(V)
-                Akkumulátor -= 2 * V^2
-                Ha Útpont == Ásvány:
-                    Ásvány_Begyűjtése()
+                Ha mozgás nem biztonságos:
+                    Standby vagy leállás
+                Különben:
+                    Mozgás(V)
+                    Akkumulátor = clamp(Akkumulátor - 2 * V^2 + NappaliTöltés, 0, 100)
         
         Ha Küldetés_Vége_Közeledik:
             Útvonal = Tervezés_Bázisra(Rover_Pozíció)
@@ -57,3 +62,11 @@ A dokumentációt az alábbi vizuális elemekkel javasoljuk kiegészíteni:
 
 ## 4. Technikai megvalósítás
 A fejlesztés során a **Python** nyelvet használtuk, az útvonaltervezéshez **Chebyshev távolságon** alapuló heurisztikát vezettünk be, amely tökéletesen illeszkedik a 8-irányú mozgási lehetőségekhez. A backend **FastAPI** segítségével kommunikál a frontenddel, biztosítva a valós idejű szimuláció láthatóságát.
+
+---
+
+## 5. Ismert korlátok és nyitott kérdések
+
+- **Akkumulátor-értelmezés:** A jelenlegi modell egy akciót akkor enged, ha a félórás ciklus végén az energiaszint nem negatív (nappali töltés beleszámít).
+- **Hazatérési edge case:** Bizonyos pályákon az aktív célpont megtartása miatt előfordulhat, hogy a rover időlimitre nem ér vissza a startpontra.
+- **Technikai adósság:** A `passable_cells` paraméter jelenleg a cache-kulcsban szerepel, de a tényleges A* keresési tér szűrését nem módosítja.

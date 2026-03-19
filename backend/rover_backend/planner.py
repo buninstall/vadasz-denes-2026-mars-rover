@@ -141,6 +141,20 @@ class RoverPlanner:
     def _solar_charge(self, step: int) -> int:
         return 10 if self._is_day(step) else 0
 
+    def _can_apply_action(self, battery: float, step: int, consumption: int) -> bool:
+        return (battery - consumption + self._solar_charge(step)) >= 0
+
+    def can_move(self, battery: float, step: int, moved_blocks: int) -> bool:
+        if moved_blocks <= 0 or moved_blocks >= len(MOVE_COST_BY_SPEED):
+            return False
+        return self._can_apply_action(battery, step, MOVE_COST_BY_SPEED[moved_blocks])
+
+    def can_mine(self, battery: float, step: int) -> bool:
+        return self._can_apply_action(battery, step, 2)
+
+    def can_standby(self, battery: float, step: int) -> bool:
+        return self._can_apply_action(battery, step, 1)
+
     def _move_battery(self, battery: float, step: int, moved_blocks: int) -> float:
         consumption = MOVE_COST_BY_SPEED[moved_blocks] if moved_blocks > 0 else 1
         return max(0.0, min(float(MAX_BATTERY), battery - consumption + self._solar_charge(step)))
@@ -156,9 +170,9 @@ class RoverPlanner:
         projected_step = step
 
         for _ in range(remaining_blocks):
-            projected_battery = self._move_battery(projected_battery, projected_step, 1)
-            if projected_battery <= 0:
+            if not self.can_move(projected_battery, projected_step, 1):
                 return False
+            projected_battery = self._move_battery(projected_battery, projected_step, 1)
             projected_step += 1
 
         return True
@@ -170,14 +184,14 @@ class RoverPlanner:
         step: int,
         max_speed: int = 3,
     ) -> int:
-        if remaining_blocks <= 0 or battery <= 0:
+        if remaining_blocks <= 0 or battery < 0:
             return 0
 
         capped_speed = min(3, max(1, max_speed), remaining_blocks)
         for moved_blocks in range(capped_speed, 0, -1):
-            battery_after_move = self._move_battery(battery, step, moved_blocks)
-            if battery_after_move <= 0:
+            if not self.can_move(battery, step, moved_blocks):
                 continue
+            battery_after_move = self._move_battery(battery, step, moved_blocks)
             if self._estimate_route_feasible(
                 remaining_blocks - moved_blocks,
                 battery_after_move,
@@ -558,17 +572,17 @@ class RoverPlanner:
                 ),
             )
             if moved_blocks <= 0:
-                if self._is_day(simulated_step) and simulated_battery < MAX_BATTERY:
+                if (
+                    self._is_day(simulated_step)
+                    and simulated_battery < MAX_BATTERY
+                    and self.can_standby(simulated_battery, simulated_step)
+                ):
                     simulated_battery = self._standby_battery(simulated_battery, simulated_step)
-                    if simulated_battery <= 0:
-                        return None
                     simulated_step += 1
                     continue
                 return None
 
             simulated_battery = self._move_battery(simulated_battery, simulated_step, moved_blocks)
-            if simulated_battery <= 0:
-                return None
 
             outbound_remaining -= moved_blocks
             simulated_step += 1
@@ -576,9 +590,9 @@ class RoverPlanner:
         if simulated_step >= max_steps:
             return None
 
-        simulated_battery = self._mine_battery(simulated_battery, simulated_step)
-        if simulated_battery <= 0:
+        if not self.can_mine(simulated_battery, simulated_step):
             return None
+        simulated_battery = self._mine_battery(simulated_battery, simulated_step)
 
         simulated_step += 1
         to_target_steps = simulated_step - step
@@ -598,17 +612,17 @@ class RoverPlanner:
                 ),
             )
             if moved_blocks <= 0:
-                if self._is_day(simulated_step) and simulated_battery < MAX_BATTERY:
+                if (
+                    self._is_day(simulated_step)
+                    and simulated_battery < MAX_BATTERY
+                    and self.can_standby(simulated_battery, simulated_step)
+                ):
                     simulated_battery = self._standby_battery(simulated_battery, simulated_step)
-                    if simulated_battery <= 0:
-                        return None
                     simulated_step += 1
                     continue
                 return None
 
             simulated_battery = self._move_battery(simulated_battery, simulated_step, moved_blocks)
-            if simulated_battery <= 0:
-                return None
 
             home_remaining -= moved_blocks
             simulated_step += 1

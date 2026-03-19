@@ -109,7 +109,10 @@ async def upload_map(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Map must have exactly one start point 'S'")
 
     try:
-        runtime_map_file, runtime_grid = prepare_runtime_map(target_path)
+        runtime_map_file, runtime_grid = prepare_runtime_map(
+            target_path,
+            randomize_start=False,
+        )
     except (FileNotFoundError, ValueError) as exc:
         target_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
