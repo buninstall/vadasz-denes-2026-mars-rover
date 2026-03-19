@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, Suspense, useMemo, useState, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Sky, Stars, useGLTF, Clone, OrbitControls } from '@react-three/drei';
+import { Sky, Stars, useGLTF, Clone, OrbitControls, ContactShadows, Environment, Float, PerspectiveCamera } from '@react-three/drei';
+import { EffectComposer, Bloom, Noise, Vignette, ToneMapping } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { MapData, SimulationResult } from '../types';
 import { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
@@ -35,9 +36,9 @@ const GOLD_GROUND_CLEARANCE = 0.04;
 const MINERAL_SCALE = 0.15;
 const GOLD_SCALE = 5;
 const MINERAL_RANDOM_OFFSET = 0.6;
-const RENDER_DISTANCE = 1500;
-const TERRAIN_SIZE = 2000;
-const TERRAIN_SEGMENTS = 400;
+const RENDER_DISTANCE = 1400;
+const TERRAIN_SIZE = 2200;
+const TERRAIN_SEGMENTS = 250;
 const ARRIVAL_THRESHOLD = 1.2;
 // ==================
 
@@ -46,9 +47,9 @@ const CELL_SIZE = 2;
 const OFFSET = (GRID_SIZE * CELL_SIZE) / 2;
 
 // The play area edge in world coords
-const PLAY_EDGE = OFFSET; // 50
-const RIM_WIDTH = 12;     // width of the crater rim ring
-const RIM_HEIGHT = 5;     // how high the rim rises
+const PLAY_EDGE = OFFSET + 12; // Pushed out further so minerals don't hit the rim
+const RIM_WIDTH = 18;     // Wider, smoother transition
+const RIM_HEIGHT = 4;     // Slightly lower rim for better visibility
 
 const seededRandom = (x: number, y: number): number => {
   const seed = x * 73856093 ^ y * 19349663;
@@ -496,10 +497,23 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
   useFrame((_, delta) => {
     if (!roverRef.current || pathPoints.length === 0) return;
 
+    const frameDelta = Math.min(delta, 1 / 30);
+
     const idx = Math.min(stepRef.current, pathPoints.length - 1);
     const target = pathPoints[idx];
     const position = roverRef.current.position;
     const velocity = velocityRef.current;
+
+    const directToTarget = new THREE.Vector2(target.x - position.x, target.z - position.z);
+    const directDistance = directToTarget.length();
+    const maxNavigateStep = CELL_SIZE * 1.05;
+    const hasLongHop = directDistance > maxNavigateStep;
+    const navTargetX = hasLongHop
+      ? position.x + (directToTarget.x / directDistance) * CELL_SIZE
+      : target.x;
+    const navTargetZ = hasLongHop
+      ? position.z + (directToTarget.y / directDistance) * CELL_SIZE
+      : target.z;
 
     const spd = Math.max(0.1, speedRef.current);
     const accelScale = (isMiningRef.current ? 6 : 18) * spd;
@@ -510,11 +524,11 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     const isAtEnd = idx === pathPoints.length - 1 && distToTarget < 0.1;
     
     if (!isAtEnd) {
-      velocity.x += THREE.MathUtils.clamp((target.x - position.x) * accelScale, -20 * spd, 20 * spd) * delta;
-      velocity.z += THREE.MathUtils.clamp((target.z - position.z) * accelScale, -20 * spd, 20 * spd) * delta;
+      velocity.x += THREE.MathUtils.clamp((navTargetX - position.x) * accelScale, -20 * spd, 20 * spd) * frameDelta;
+      velocity.z += THREE.MathUtils.clamp((navTargetZ - position.z) * accelScale, -20 * spd, 20 * spd) * frameDelta;
     }
 
-    const horizontalDamping = isAtEnd ? Math.exp(-15 * delta) : Math.exp(-6 * delta);
+    const horizontalDamping = isAtEnd ? Math.exp(-15 * frameDelta) : Math.exp(-6 * frameDelta);
     velocity.x *= horizontalDamping;
     velocity.z *= horizontalDamping;
 
@@ -525,14 +539,14 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
       velocity.z *= scale;
     }
 
-    position.x += velocity.x * delta;
-    position.z += velocity.z * delta;
+    position.x += velocity.x * frameDelta;
+    position.z += velocity.z * frameDelta;
 
     const desiredY = estimateTerrainHeight(position.x, position.z) + groundOffset + ROVER_GROUND_CLEARANCE;
-    velocity.y += (desiredY - position.y) * 50 * delta;
-    velocity.y -= 7.5 * delta;
-    velocity.y *= Math.exp(-7.5 * delta);
-    position.y += velocity.y * delta;
+    velocity.y += (desiredY - position.y) * 50 * frameDelta;
+    velocity.y -= 7.5 * frameDelta;
+    velocity.y *= Math.exp(-7.5 * frameDelta);
+    position.y += velocity.y * frameDelta;
 
     if (position.y < desiredY) {
       position.y = desiredY;
@@ -548,7 +562,7 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
 
     const targetYaw = Math.atan2(headingRef.current.x, headingRef.current.y);
     const yawDiff = ((targetYaw - yawRef.current + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    yawRef.current += yawDiff * Math.min(1, 10 * delta);
+    yawRef.current += yawDiff * Math.min(1, 10 * frameDelta);
     roverRef.current.rotation.y = yawRef.current;
 
     const dirX = headingRef.current.x;
@@ -568,12 +582,12 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     roverRef.current.rotation.x = THREE.MathUtils.lerp(
       roverRef.current.rotation.x,
       targetPitch,
-      Math.min(1, 8 * delta),
+      Math.min(1, 8 * frameDelta),
     );
     roverRef.current.rotation.z = THREE.MathUtils.lerp(
       roverRef.current.rotation.z,
       targetRoll,
-      Math.min(1, 8 * delta),
+      Math.min(1, 8 * frameDelta),
     );
 
     if (isMiningRef.current) {
@@ -704,30 +718,64 @@ const Mineral = React.memo(({ position, type, rotation, collected }: {
 }, (prev, next) => prev.collected === next.collected);
 
 // ── Minerals
-const MapMinerals = React.memo(({ map, mineralCollectionMap, collectedStep }: {
+const MapMinerals = React.memo(({
+  map,
+  simulationResult,
+  mineralCollectionMap,
+  collectedStep,
+}: {
   map: MapData;
+  simulationResult: SimulationResult | null;
   mineralCollectionMap: Map<string, number>;
   collectedStep: number;
-}) => (
-  <>
-    {map.grid.map((row, y) =>
-      row.map((cell, x) => {
-        if (cell !== 'Y' && cell !== 'B' && cell !== 'G') return null;
-        const collectedAt = mineralCollectionMap.get(`${y}_${x}`);
-        const [rx, , rz] = getRandomizedPosition(x, y, MINERAL_RANDOM_OFFSET);
+}) => {
+  const mineralCells = useMemo(() => {
+    const cells: Array<{ row: number; col: number; type: 'Y' | 'B' | 'G' }> = [];
+
+    if (simulationResult?.all_minerals && Object.keys(simulationResult.all_minerals).length > 0) {
+      const parseKey = /\((\d+),\s*(\d+)\)/;
+      for (const [key, rawType] of Object.entries(simulationResult.all_minerals)) {
+        const match = key.match(parseKey);
+        if (!match) continue;
+        if (rawType !== 'Y' && rawType !== 'B' && rawType !== 'G') continue;
+
+        cells.push({
+          row: Number(match[1]),
+          col: Number(match[2]),
+          type: rawType,
+        });
+      }
+      return cells;
+    }
+
+    map.grid.forEach((row, rowIndex) => {
+      row.forEach((cell, columnIndex) => {
+        if (cell !== 'Y' && cell !== 'B' && cell !== 'G') return;
+        cells.push({ row: rowIndex, col: columnIndex, type: cell });
+      });
+    });
+
+    return cells;
+  }, [map, simulationResult]);
+
+  return (
+    <>
+      {mineralCells.map(({ row, col, type }) => {
+        const collectedAt = mineralCollectionMap.get(`${row}_${col}`);
+        const [rx, , rz] = getPosition(col, row);
         return (
           <Mineral
-            key={`min-${x}-${y}`}
+            key={`min-${row}-${col}`}
             position={[rx, 0, rz]}
-            type={cell as 'Y' | 'B' | 'G'}
-            rotation={getRandomRotation(x, y)}
-            collected={collectedAt !== undefined && collectedAt <= collectedStep}
+            type={type}
+            rotation={getRandomRotation(col, row)}
+            collected={collectedAt !== undefined && collectedAt < collectedStep}
           />
         );
-      })
-    )}
-  </>
-));
+      })}
+    </>
+  );
+});
 
 // ── Mars terrain mesh with vertex colours
 const MarsSurface = React.memo(() => {
@@ -756,44 +804,37 @@ const MarsSurface = React.memo(() => {
     const range = maxH - minH || 1;
     const colors = new Float32Array(pos.count * 3);
 
-    // Mars palette
-    const playColor = new THREE.Color('#8b5e3c');   // warm brown for flat play area
-    const rimColor = new THREE.Color('#C9704A');     // orange-red rim
-    const valleyColor = new THREE.Color('#6B3A2A');  // dark rust
-    const midColor = new THREE.Color('#A0522D');     // sienna
-    const peakColor = new THREE.Color('#C97B4B');    // sandy orange
+    // Unified Mars palette - no more dark brown play area
+    const marsDustColor = new THREE.Color('#A0522D'); // Base Martian sienna
+    const rimColor = new THREE.Color('#C9704A');      // Orange-red for the rim
+    const valleyColor = new THREE.Color('#6B3A2A');   // Darker rust for low points
+    const peakColor = new THREE.Color('#D27D4B');     // Sandy orange for peaks
     const tmpColor = new THREE.Color();
 
     for (let i = 0; i < pos.count; i++) {
       const vx = pos.getX(i);
       const vy = pos.getY(i);
-      const dE = Math.max(Math.abs(vx) - PLAY_EDGE, Math.abs(vy) - PLAY_EDGE, 0);
+      const dE = Math.max(Math.abs(vx) - (OFFSET + 2), Math.abs(vy) - (OFFSET + 2), 0);
 
-      if (dE <= 0) {
-        // Inside play area: warm flat brown with slight variation
-        const variation = (seededRandom(Math.floor(vx * 5 + 5000), Math.floor(vy * 5 + 5000)) - 0.5) * 0.04;
-        tmpColor.copy(playColor);
-        tmpColor.r = THREE.MathUtils.clamp(tmpColor.r + variation, 0, 1);
-        tmpColor.g = THREE.MathUtils.clamp(tmpColor.g + variation * 0.7, 0, 1);
-        tmpColor.b = THREE.MathUtils.clamp(tmpColor.b + variation * 0.5, 0, 1);
-      } else if (dE < RIM_WIDTH) {
-        // Rim zone: blend from play color to rim color
-        const rimT = dE / RIM_WIDTH;
-        tmpColor.lerpColors(playColor, rimColor, smoothstep(rimT));
+      // Height-based coloring for everyone to keep it uniform
+      const t = (heights[i] - minH) / range;
+      if (t < 0.5) {
+        tmpColor.lerpColors(valleyColor, marsDustColor, t * 2);
       } else {
-        // Outer terrain: height-based colouring
-        const t = (heights[i] - minH) / range;
-        if (t < 0.5) {
-          tmpColor.lerpColors(valleyColor, midColor, t * 2);
-        } else {
-          tmpColor.lerpColors(midColor, peakColor, (t - 0.5) * 2);
-        }
-        // Subtle variation
-        const variation = (seededRandom(Math.floor(vx * 3 + 5000), Math.floor(vy * 3 + 5000)) - 0.5) * 0.05;
-        tmpColor.r = THREE.MathUtils.clamp(tmpColor.r + variation, 0, 1);
-        tmpColor.g = THREE.MathUtils.clamp(tmpColor.g + variation * 0.7, 0, 1);
-        tmpColor.b = THREE.MathUtils.clamp(tmpColor.b + variation * 0.5, 0, 1);
+        tmpColor.lerpColors(marsDustColor, peakColor, (t - 0.5) * 2);
       }
+
+      // If it's the rim zone, blend slightly towards the rim color
+      if (dE > 0 && dE < RIM_WIDTH + 10) {
+        const rimInfluence = Math.sin(Math.min(dE / RIM_WIDTH, 1) * Math.PI);
+        tmpColor.lerp(rimColor, rimInfluence * 0.4);
+      }
+
+      // Subtle surface noise variation (applied everywhere)
+      const variation = (seededRandom(Math.floor(vx * 4 + 5000), Math.floor(vy * 4 + 5000)) - 0.5) * 0.06;
+      tmpColor.r = THREE.MathUtils.clamp(tmpColor.r + variation, 0, 1);
+      tmpColor.g = THREE.MathUtils.clamp(tmpColor.g + variation * 0.7, 0, 1);
+      tmpColor.b = THREE.MathUtils.clamp(tmpColor.b + variation * 0.5, 0, 1);
 
       colors[i * 3] = tmpColor.r;
       colors[i * 3 + 1] = tmpColor.g;
@@ -804,9 +845,9 @@ const MarsSurface = React.memo(() => {
   }, []);
 
   return (
-    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow castShadow>
+    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
       <planeGeometry args={[TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS]} />
-      <meshStandardMaterial vertexColors roughness={0.92} metalness={0.04} />
+      <meshStandardMaterial vertexColors roughness={0.8} metalness={0.1} />
     </mesh>
   );
 });
@@ -1010,7 +1051,7 @@ const Scene: React.FC<SceneProps> = ({
 
   useEffect(() => {
     if (stepOverride === null || !simulationResult || pathPoints.length === 0) return;
-    const clamped = Math.max(0, Math.min(stepOverride, pathPoints.length - 1));
+    const clamped = Math.max(0, Math.min(stepOverride ?? 0, pathPoints.length - 1));
     stepRef.current = clamped;
     setCollectedStep(clamped);
 
@@ -1061,6 +1102,7 @@ const Scene: React.FC<SceneProps> = ({
     if (!simulationResult?.logs?.length) return null;
     return simulationResult.logs[Math.min(collectedStep, simulationResult.logs.length - 1)] ?? null;
   }, [simulationResult, collectedStep]);
+  const isMiningNow = currentLog?.action === 'mine' && (currentLog?.minerals_collected?.length ?? 0) > 0;
 
   const isDay = currentLog?.is_day ?? true;
   const simHour = currentLog ? (6 + currentLog.time_hours) % 24 : 12;
@@ -1074,7 +1116,7 @@ const Scene: React.FC<SceneProps> = ({
     return [x, y, z];
   }, [simHour, isDay]);
 
-  const fogColor = isDay ? '#c7865f' : '#8f6a5c';
+  const fogColor = isDay ? '#d29a7b' : '#3a2e2b';
 
   const roverHeading = useMemo(() => {
     if (pathPoints.length < 2) return new THREE.Vector3(0, 0, 1);
@@ -1101,6 +1143,14 @@ const Scene: React.FC<SceneProps> = ({
   const canPlay = !!simulationResult;
   const isActivelyPlaying = isPlaying && !localPaused && !photoMode;
 
+  const miningPosition = useMemo<[number, number, number] | null>(() => {
+    if (!isMiningNow || !currentLog?.position) return null;
+    const [row, col] = currentLog.position;
+    const wx = col * CELL_SIZE - OFFSET;
+    const wz = row * CELL_SIZE - OFFSET;
+    return [wx, estimateTerrainHeight(wx, wz), wz];
+  }, [isMiningNow, currentLog]);
+
   return (
     <div className="w-full h-screen absolute inset-0 z-0">
       <Canvas
@@ -1119,31 +1169,42 @@ const Scene: React.FC<SceneProps> = ({
               mieDirectionalG={0.78}
             />
             {!isDay && <Stars radius={460} depth={120} count={2200} factor={4} fade speed={0.3} />}
-            <ambientLight intensity={isDay ? 0.98 : 0.78} color={isDay ? '#e9edf5' : '#e4e8f2'} />
+            <ambientLight intensity={isDay ? 1.4 : 1.1} color={isDay ? '#ffffff' : '#d1d9e6'} />
             <hemisphereLight
-              intensity={isDay ? 0.82 : 0.72}
-              color={isDay ? '#e8edf7' : '#d7deef'}
-              groundColor={isDay ? '#6e5a4b' : '#5f4b42'}
+              intensity={isDay ? 1.2 : 0.9}
+              color={isDay ? '#ffffff' : '#b0c4de'}
+              groundColor={isDay ? '#8b5e3c' : '#4a3a2e'}
             />
             <directionalLight
               position={sunPosition}
-              intensity={isDay ? 1.34 : 0.84}
+              intensity={isDay ? 1.8 : 1.2}
               castShadow
-              shadow-mapSize={[1024, 1024]}
+              shadow-mapSize={[512, 512]}
               shadow-camera-far={150}
               shadow-camera-left={-80}
               shadow-camera-right={80}
               shadow-camera-top={80}
               shadow-camera-bottom={-80}
+              shadow-bias={-0.0005}
             />
             <pointLight
               position={[currentRoverPos[0], currentRoverPos[1] + 1.2, currentRoverPos[2]]}
-              intensity={isDay ? 2.4 : 3.2}
-              distance={46}
-              color="#f8fafc"
-              castShadow
+              intensity={isDay ? 2.8 : 4.5}
+              distance={40}
+              color="#ffffff"
             />
           </>
+
+          <Environment preset="city" />
+          <ContactShadows 
+            resolution={512} 
+            scale={100} 
+            blur={2.5} 
+            opacity={0.4} 
+            far={10} 
+            color="#3e2a1e" 
+            frames={1}
+          />
 
           <MarsSurface />
           <EnergyHeatmapOverlay map={map} start={simulationResult?.start ?? mapStartCell} visible={showEnergyHeatmap} />
@@ -1154,9 +1215,14 @@ const Scene: React.FC<SceneProps> = ({
 
           <ObstaclesInstanced map={map} />
 
-          <MapMinerals map={map} mineralCollectionMap={mineralCollectionMap} collectedStep={collectedStep} />
+          <MapMinerals
+            map={map}
+            simulationResult={simulationResult}
+            mineralCollectionMap={mineralCollectionMap}
+            collectedStep={collectedStep}
+          />
 
-          {isMiningRef.current && <MiningEffect position={currentRoverPos} />}
+          {miningPosition && <MiningEffect position={miningPosition} />}
 
           <Rover
             pathPoints={pathPoints.length > 0 ? pathPoints : [roverInitPoint]}
@@ -1186,7 +1252,13 @@ const Scene: React.FC<SceneProps> = ({
             />
           )}
 
-          <fog attach="fog" args={[fogColor, 90, RENDER_DISTANCE]} />
+          <EffectComposer multisampling={0}>
+            <Bloom luminanceThreshold={1.2} mipmapBlur intensity={0.3} radius={0.3} />
+            <ToneMapping mode={THREE.ACESFilmicToneMapping} />
+            <Vignette eskil={false} offset={0.1} darkness={1.0} />
+          </EffectComposer>
+
+          <fog attach="fog" args={[fogColor, 10, RENDER_DISTANCE]} />
           <CameraController roverPosRef={roverPosRef} />
         </Suspense>
       </Canvas>

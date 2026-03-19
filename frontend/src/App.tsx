@@ -68,8 +68,6 @@ export default function App() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [stepOverride, setStepOverride] = useState<number | null>(null);
-  const [showHeatmap, setShowHeatmap] = useState(false);
-  const [photoMode, setPhotoMode] = useState(false);
   const [reportDismissed, setReportDismissed] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -115,7 +113,7 @@ export default function App() {
   }, [simulationResult, currentStep]);
   const isMissionFinished =
     !!simulationResult && currentStep >= Math.max(simulationResult.path.length - 1, 0) && !isPlaying;
-  const showPostMissionReport = isMissionFinished && !reportDismissed && !photoMode;
+  const showPostMissionReport = isMissionFinished && !reportDismissed;
   const showSuccessfulReportOnly = showPostMissionReport && !!simulationResult?.success;
 
   const handleStep = useCallback((step: number) => {
@@ -142,7 +140,6 @@ export default function App() {
       setCurrentStep(0);
       setStepOverride(0);
       setReportDismissed(false);
-      setPhotoMode(false);
     }
   }, [simulationResult]);
 
@@ -203,31 +200,12 @@ export default function App() {
             onStep={handleStep}
             onComplete={handleComplete}
             stepOverride={stepOverride}
-            showEnergyHeatmap={showHeatmap}
-            photoMode={photoMode}
             hideHudOverlay={showSuccessfulReportOnly}
           />
         </div>
       )}
 
       {isLoaded && !showSuccessfulReportOnly && (
-        <div className="mission-tools pointer-events-auto">
-          <button
-            className={`mission-tool-btn ${showHeatmap ? 'mission-tool-btn--active' : ''}`}
-            onClick={() => setShowHeatmap((prev) => !prev)}
-          >
-            Heatmap
-          </button>
-          <button
-            className={`mission-tool-btn ${photoMode ? 'mission-tool-btn--active' : ''}`}
-            onClick={() => setPhotoMode((prev) => !prev)}
-          >
-            {photoMode ? 'Exit photo' : 'Photo mode'}
-          </button>
-        </div>
-      )}
-
-      {isLoaded && !photoMode && !showSuccessfulReportOnly && (
         <div className="mission-shell">
           <div className="mission-column mission-column--primary">
             <div className="pointer-events-auto">
@@ -261,13 +239,12 @@ export default function App() {
         </div>
       )}
 
-      {isLoaded && !photoMode && !showSuccessfulReportOnly && (
+      {isLoaded && !showSuccessfulReportOnly && (
         <Minimap
           map={map}
           simulationResult={simulationResult}
           currentStep={currentStep}
           comparisonRuns={comparisonRuns}
-          showEnergyHeatmap={showHeatmap}
         />
       )}
 

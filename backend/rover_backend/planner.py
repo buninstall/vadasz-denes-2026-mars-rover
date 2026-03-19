@@ -671,6 +671,32 @@ class RoverPlanner:
 
         time_left = max_steps - step
 
+        if adjacent_candidates:
+            adjacent_priority = sorted(
+                adjacent_candidates,
+                key=lambda mineral_index: (
+                    self._index_chebyshev_distance(pos_index, mineral_index),
+                    -frontier_exposure_map[mineral_index],
+                    -density_map[mineral_index],
+                    -cluster_size_map[mineral_index],
+                ),
+            )
+            adjacent_target, adjacent_evaluation, _ = self._best_candidate_from_pool(
+                adjacent_priority,
+                pos,
+                pos_index,
+                battery,
+                step,
+                max_steps,
+                time_left,
+                density_map,
+                cluster_size_map,
+                frontier_exposure_map,
+                cluster_frontier_map,
+            )
+            if adjacent_target is not None and adjacent_evaluation is not None:
+                return self._index_to_position(adjacent_target), adjacent_evaluation
+
         if focus_cluster_id is not None:
             focus_pool = cluster_frontier_members[focus_cluster_id]
             focus_local_candidates = heapq.nsmallest(
