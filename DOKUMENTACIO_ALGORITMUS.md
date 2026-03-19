@@ -1,7 +1,7 @@
 # Mars Rover 2026 - Útvonaltervező Algoritmus Dokumentáció
 
-**Csapat:** [Csapatneved]
-**Dátum:** 2026. március 19.
+**Csapat:** [Bun install]
+**Dátum:** 2026. március 20.
 
 ## 1. Az algoritmus áttekintése
 Projektünkben egy többszempontú optimalizációs modellt alkalmaztunk, amely az A* keresőalgoritmus egy módosított változatára épül. Célunk nem csak a legrövidebb út megtalálása volt, hanem a küldetés teljes időtartama alatt begyűjtött ásványok mennyiségének és a rover túlélési esélyeinek (akkumulátor-kezelés) maximalizálása.
