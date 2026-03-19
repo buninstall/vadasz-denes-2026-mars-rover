@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, Suspense, useMemo, useState, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Sky, Stars, useGLTF, Clone, OrbitControls, ContactShadows, Environment, Float, PerspectiveCamera } from '@react-three/drei';
+import { Sky, Stars, useGLTF, Clone, OrbitControls, Environment, Float, PerspectiveCamera } from '@react-three/drei';
 import { EffectComposer, Bloom, Noise, Vignette, ToneMapping } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { MapData, SimulationResult, CameraMode } from '../types';
@@ -1711,16 +1711,6 @@ const Scene: React.FC<SceneProps> = ({
           </>
 
           <Environment preset="city" />
-          <ContactShadows 
-            resolution={512} 
-            scale={100} 
-            blur={2.5} 
-            opacity={0.4} 
-            far={10} 
-            color="#3e2a1e" 
-            frames={1}
-          />
-
           <MarsSurface />
           <EnergyHeatmapOverlay map={map} start={simulationResult?.start ?? mapStartCell} visible={showEnergyHeatmap} />
           <BaseBeacon position={mapStartWorld} />
