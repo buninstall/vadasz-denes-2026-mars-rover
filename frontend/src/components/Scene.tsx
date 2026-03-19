@@ -43,7 +43,7 @@ const TERRAIN_SIZE = 2200;
 const TERRAIN_SEGMENTS = 250;
 const ARRIVAL_THRESHOLD = 0.2;
 const CAMERA_GROUND_CLEARANCE = 2.3;
-const DETACHED_CAMERA_HALF_EXTENT = 50;
+const DETACHED_CAMERA_HALF_EXTENT = 60;
 const DETACHED_CAMERA_MAX_HEIGHT = 240;
 // ==================
 
@@ -165,43 +165,111 @@ function getModelGroundOffset(scene: THREE.Group, cacheKey: string, scale: numbe
   return offset;
 }
 
-// ── Path lines: future plan (ghost) + traversed route (live)
+// ── Path lines: future guide + traversed route (thick, static, cinematic)
 const PathLine = React.memo(({ pathPoints, currentStep }: { pathPoints: THREE.Vector3[]; currentStep: number }) => {
-  const traversedGeometry = useMemo(() => {
-    if (pathPoints.length < 2) return null;
+  const traversedPoints = useMemo(() => {
+    if (pathPoints.length < 2) return [] as THREE.Vector3[];
     const end = Math.min(Math.max(currentStep, 1), pathPoints.length - 1);
-    const points = pathPoints
+    return pathPoints
       .slice(0, end + 1)
-      .map((point) => new THREE.Vector3(point.x, point.y + 0.42, point.z));
-    if (points.length < 2) return null;
-    return new THREE.BufferGeometry().setFromPoints(points);
+      .map((point) => new THREE.Vector3(point.x, point.y + 0.52, point.z));
   }, [pathPoints, currentStep]);
 
-  const futureGeometry = useMemo(() => {
-    if (pathPoints.length < 2) return null;
+  const futurePoints = useMemo(() => {
+    if (pathPoints.length < 2) return [] as THREE.Vector3[];
     const start = Math.min(Math.max(currentStep, 0), pathPoints.length - 1);
-    const points = pathPoints
+    return pathPoints
       .slice(start)
-      .map((point) => new THREE.Vector3(point.x, point.y + 0.4, point.z));
-    if (points.length < 2) return null;
-    return new THREE.BufferGeometry().setFromPoints(points);
+      .map((point) => new THREE.Vector3(point.x, point.y + 0.48, point.z));
   }, [pathPoints, currentStep]);
 
-  if (!futureGeometry && !traversedGeometry) return null;
+  const traversedCoreGeometry = useMemo(() => {
+    if (traversedPoints.length < 2) return null;
+    const curve = new THREE.CatmullRomCurve3(traversedPoints, false, 'catmullrom', 0.08);
+    const tubularSegments = Math.max(28, traversedPoints.length * 7);
+    return new THREE.TubeGeometry(curve, tubularSegments, 0.2, 14, false);
+  }, [traversedPoints]);
+
+  const traversedGlowGeometry = useMemo(() => {
+    if (traversedPoints.length < 2) return null;
+    const curve = new THREE.CatmullRomCurve3(traversedPoints, false, 'catmullrom', 0.08);
+    const tubularSegments = Math.max(28, traversedPoints.length * 7);
+    return new THREE.TubeGeometry(curve, tubularSegments, 0.34, 12, false);
+  }, [traversedPoints]);
+
+  const futureCoreGeometry = useMemo(() => {
+    if (futurePoints.length < 2) return null;
+    const curve = new THREE.CatmullRomCurve3(futurePoints, false, 'catmullrom', 0.08);
+    const tubularSegments = Math.max(24, futurePoints.length * 6);
+    return new THREE.TubeGeometry(curve, tubularSegments, 0.13, 10, false);
+  }, [futurePoints]);
+
+  const futureGlowGeometry = useMemo(() => {
+    if (futurePoints.length < 2) return null;
+    const curve = new THREE.CatmullRomCurve3(futurePoints, false, 'catmullrom', 0.08);
+    const tubularSegments = Math.max(24, futurePoints.length * 6);
+    return new THREE.TubeGeometry(curve, tubularSegments, 0.24, 10, false);
+  }, [futurePoints]);
+
+  useEffect(() => {
+    return () => {
+      traversedCoreGeometry?.dispose();
+      traversedGlowGeometry?.dispose();
+      futureCoreGeometry?.dispose();
+      futureGlowGeometry?.dispose();
+    };
+  }, [traversedCoreGeometry, traversedGlowGeometry, futureCoreGeometry, futureGlowGeometry]);
+
+  if (!traversedCoreGeometry && !futureCoreGeometry) return null;
 
   return (
     <>
-      {futureGeometry && (
-        // @ts-ignore
-        <line geometry={futureGeometry}>
-          <lineBasicMaterial color="#9eddf0" opacity={0.2} transparent linewidth={1} />
-        </line>
+      {futureGlowGeometry && (
+        <mesh geometry={futureGlowGeometry} renderOrder={4}>
+          <meshBasicMaterial
+            color="#75d4ef"
+            transparent
+            opacity={0.16}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
       )}
-      {traversedGeometry && (
-        // @ts-ignore
-        <line geometry={traversedGeometry}>
-          <lineBasicMaterial color="#f5b56a" opacity={0.88} transparent linewidth={1.4} />
-        </line>
+      {futureCoreGeometry && (
+        <mesh geometry={futureCoreGeometry} renderOrder={5}>
+          <meshStandardMaterial
+            color="#9ee9ff"
+            emissive="#4aa9bd"
+            emissiveIntensity={0.42}
+            roughness={0.38}
+            metalness={0.08}
+            transparent
+            opacity={0.66}
+          />
+        </mesh>
+      )}
+
+      {traversedGlowGeometry && (
+        <mesh geometry={traversedGlowGeometry} renderOrder={6}>
+          <meshBasicMaterial
+            color="#f8bd70"
+            transparent
+            opacity={0.28}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
+      {traversedCoreGeometry && (
+        <mesh geometry={traversedCoreGeometry} renderOrder={7}>
+          <meshStandardMaterial
+            color="#ffd08a"
+            emissive="#c98337"
+            emissiveIntensity={0.72}
+            roughness={0.26}
+            metalness={0.15}
+          />
+        </mesh>
       )}
     </>
   );
@@ -417,6 +485,7 @@ const SceneryInstanced = React.memo(() => {
   type RockBoundsInfo = {
     baseSize: number;
     supportPoints: THREE.Vector3[];
+    floatCheckPoints: THREE.Vector3[];
     footprintRadius: number;
   };
 
@@ -436,7 +505,7 @@ const SceneryInstanced = React.memo(() => {
     const minY = box.min.y;
     const lowBand = Math.max(size.y * 0.22, 0.08);
     if (pos) {
-      const stride = Math.max(1, Math.floor(pos.count / 220));
+      const stride = Math.max(1, Math.floor(pos.count / 900));
       for (let i = 0; i < pos.count; i += stride) {
         const y = pos.getY(i);
         if (y <= minY + lowBand) {
@@ -460,7 +529,7 @@ const SceneryInstanced = React.memo(() => {
       }
     }
 
-    const maxSupportPoints = 180;
+    const maxSupportPoints = 420;
     if (supportPoints.length > maxSupportPoints) {
       const trimmed: THREE.Vector3[] = [];
       const pickStride = Math.ceil(supportPoints.length / maxSupportPoints);
@@ -478,7 +547,26 @@ const SceneryInstanced = React.memo(() => {
       if (radius > footprintRadius) footprintRadius = radius;
     }
 
-    return { baseSize, supportPoints, footprintRadius: Math.max(footprintRadius, 0.2) };
+    const floatCheckPoints: THREE.Vector3[] = [];
+    const checkSteps = [0, 0.17, 0.34, 0.5, 0.66, 0.83, 1];
+    for (let xi = 0; xi < checkSteps.length; xi++) {
+      for (let zi = 0; zi < checkSteps.length; zi++) {
+        floatCheckPoints.push(
+          new THREE.Vector3(
+            THREE.MathUtils.lerp(box.min.x, box.max.x, checkSteps[xi]),
+            minY,
+            THREE.MathUtils.lerp(box.min.z, box.max.z, checkSteps[zi]),
+          ),
+        );
+      }
+    }
+
+    return {
+      baseSize,
+      supportPoints,
+      floatCheckPoints,
+      footprintRadius: Math.max(footprintRadius, 0.2),
+    };
   }, []);
 
   const boulderBounds = useMemo(
@@ -621,7 +709,7 @@ const SceneryInstanced = React.memo(() => {
       }
 
       const localRelief = maxGround - minGround;
-      if (localRelief > 4.2) {
+      if (localRelief > 3.2) {
         continue;
       }
 
@@ -629,6 +717,31 @@ const SceneryInstanced = React.memo(() => {
 
       dummy.position.set(x, settledY, z);
       dummy.updateMatrix();
+
+      let maxFloatGap = 0;
+      let invalidFloatCheck = false;
+      for (let checkIndex = 0; checkIndex < bounds.floatCheckPoints.length; checkIndex++) {
+        transformedSupport.copy(bounds.floatCheckPoints[checkIndex]).applyMatrix4(dummy.matrix);
+        const wx = transformedSupport.x;
+        const wz = transformedSupport.z;
+        if (Math.abs(wx) > terrainHalf || Math.abs(wz) > terrainHalf) {
+          invalidFloatCheck = true;
+          break;
+        }
+        const ground = estimateTerrainHeight(wx, wz);
+        const gap = transformedSupport.y - ground;
+        if (gap > maxFloatGap) maxFloatGap = gap;
+      }
+
+      if (invalidFloatCheck) {
+        continue;
+      }
+
+      if (maxFloatGap > 0.003) {
+        dummy.position.y -= maxFloatGap + 0.03;
+        dummy.updateMatrix();
+      }
+
       matrices.push(dummy.matrix.clone());
     }
 
@@ -691,7 +804,10 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
   const roverRef = useRef<THREE.Group>(null);
   const velocityRef = useRef(new THREE.Vector3());
   const headingRef = useRef(new THREE.Vector2(0, 1));
+  const smoothHeadingRef = useRef(new THREE.Vector2(0, 1));
   const yawRef = useRef(0);
+  const currentMoveSpeedRef = useRef(0); // for acceleration/deceleration
+  const swayPhaseRef = useRef(0);
   const groundOffset = useMemo(
     () => getModelGroundOffset(scene, '/models/Rover.glb', ROVER_SCALE),
     [scene],
@@ -737,8 +853,10 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     });
   }, [wearLevel]);
 
-  useFrame((_, delta) => {
+  useFrame((_, rawDelta) => {
     if (!roverRef.current || pathPoints.length === 0) return;
+    // Clamp delta to avoid huge jumps on tab-switch or lag spikes
+    const delta = Math.min(rawDelta, 0.05);
 
     const idx = Math.min(stepRef.current, pathPoints.length - 1);
     const target = pathPoints[idx];
@@ -750,9 +868,19 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     const horizontalDistance = Math.hypot(toTargetX, toTargetZ);
 
     const speedMultiplier = Math.max(0.1, speedRef.current);
-    const moveSpeed = (isMiningRef.current ? 2.2 : 5.8) * speedMultiplier;
+    const targetMoveSpeed = (isMiningRef.current ? 2.2 : 5.8) * speedMultiplier;
 
-    if (horizontalDistance > 0.0001) {
+    // Smooth acceleration / deceleration
+    const accelRate = horizontalDistance > 0.05 ? 4.0 : 8.0; // accelerate slower, decelerate faster
+    const desiredSpeed = horizontalDistance > 0.0001 ? targetMoveSpeed : 0;
+    currentMoveSpeedRef.current = THREE.MathUtils.lerp(
+      currentMoveSpeedRef.current,
+      desiredSpeed,
+      Math.min(1, accelRate * delta),
+    );
+    const moveSpeed = currentMoveSpeedRef.current;
+
+    if (horizontalDistance > 0.0001 && moveSpeed > 0.001) {
       const moveStep = Math.min(horizontalDistance, moveSpeed * delta);
       const moveX = (toTargetX / horizontalDistance) * moveStep;
       const moveZ = (toTargetZ / horizontalDistance) * moveStep;
@@ -763,29 +891,43 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     } else {
       position.x = target.x;
       position.z = target.z;
-      velocity.x = 0;
-      velocity.z = 0;
+      velocity.x = THREE.MathUtils.lerp(velocity.x, 0, Math.min(1, 6 * delta));
+      velocity.z = THREE.MathUtils.lerp(velocity.z, 0, Math.min(1, 6 * delta));
     }
 
+    // Smooth Y-axis terrain following (reduced from 10 to 4)
     const desiredY = estimateTerrainHeight(position.x, position.z) + groundOffset + ROVER_GROUND_CLEARANCE;
-    position.y = THREE.MathUtils.lerp(position.y, desiredY, Math.min(1, 10 * delta));
+    position.y = THREE.MathUtils.lerp(position.y, desiredY, Math.min(1, 4 * delta));
 
     // Update shared rover position ref for sync
     roverPosRef.current.copy(position);
 
     const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
 
+    // Update raw heading from velocity
     if (horizontalSpeed > 0.05) {
       headingRef.current.set(velocity.x, velocity.z).normalize();
     }
 
-    const targetYaw = Math.atan2(headingRef.current.x, headingRef.current.y);
+    // Smooth the heading itself to avoid jittery direction changes
+    const smoothRate = Math.min(1, 5 * delta);
+    smoothHeadingRef.current.set(
+      THREE.MathUtils.lerp(smoothHeadingRef.current.x, headingRef.current.x, smoothRate),
+      THREE.MathUtils.lerp(smoothHeadingRef.current.y, headingRef.current.y, smoothRate),
+    );
+    if (smoothHeadingRef.current.lengthSq() > 0.0001) {
+      smoothHeadingRef.current.normalize();
+    }
+
+    // Smooth yaw rotation (reduced from 10 to 4)
+    const targetYaw = Math.atan2(smoothHeadingRef.current.x, smoothHeadingRef.current.y);
     const yawDiff = ((targetYaw - yawRef.current + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    yawRef.current += yawDiff * Math.min(1, 10 * delta);
+    yawRef.current += yawDiff * Math.min(1, 4 * delta);
     roverRef.current.rotation.y = yawRef.current;
 
-    const dirX = headingRef.current.x;
-    const dirZ = headingRef.current.y;
+    // Terrain-following pitch and roll
+    const dirX = smoothHeadingRef.current.x;
+    const dirZ = smoothHeadingRef.current.y;
     const rightX = dirZ;
     const rightZ = -dirX;
     const sample = 1.0;
@@ -795,18 +937,25 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     const hLeft = estimateTerrainHeight(position.x - rightX * sample, position.z - rightZ * sample);
     const hRight = estimateTerrainHeight(position.x + rightX * sample, position.z + rightZ * sample);
 
-    const targetPitch = THREE.MathUtils.clamp(Math.atan2(hBack - hFront, sample * 2), -0.35, 0.35);
-    const targetRoll = THREE.MathUtils.clamp(Math.atan2(hLeft - hRight, sample * 2), -0.35, 0.35);
+    const targetPitch = THREE.MathUtils.clamp(Math.atan2(hBack - hFront, sample * 2), -0.25, 0.25);
+    const targetRoll = THREE.MathUtils.clamp(Math.atan2(hLeft - hRight, sample * 2), -0.25, 0.25);
 
+    // Smooth pitch/roll (reduced from 8 to 3)
     roverRef.current.rotation.x = THREE.MathUtils.lerp(
       roverRef.current.rotation.x,
       targetPitch,
-      Math.min(1, 8 * delta),
+      Math.min(1, 3 * delta),
     );
+
+    // Subtle body sway while moving (simulates terrain micro-bumps)
+    const swayAmount = THREE.MathUtils.clamp(horizontalSpeed / 6, 0, 1) * 0.008;
+    swayPhaseRef.current += delta * 3.5;
+    const swayRoll = Math.sin(swayPhaseRef.current) * swayAmount;
+
     roverRef.current.rotation.z = THREE.MathUtils.lerp(
       roverRef.current.rotation.z,
-      targetRoll,
-      Math.min(1, 8 * delta),
+      targetRoll + swayRoll,
+      Math.min(1, 3 * delta),
     );
 
     if (isMiningRef.current) {
@@ -1136,29 +1285,40 @@ const CameraController = ({
       
       const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
 
-      if (keys.current['w']) camera.position.addScaledVector(forward, speed);
-      if (keys.current['s']) camera.position.addScaledVector(forward, -speed);
-      if (keys.current['a']) camera.position.addScaledVector(right, -speed);
-      if (keys.current['d']) camera.position.addScaledVector(right, speed);
-      if (keys.current['q']) camera.position.y += speed;
-      if (keys.current['e']) camera.position.y -= speed;
+      const moveVector = new THREE.Vector3();
+      if (keys.current['w']) moveVector.addScaledVector(forward, speed);
+      if (keys.current['s']) moveVector.addScaledVector(forward, -speed);
+      if (keys.current['a']) moveVector.addScaledVector(right, -speed);
+      if (keys.current['d']) moveVector.addScaledVector(right, speed);
+      if (keys.current['q']) moveVector.y += speed;
+      if (keys.current['e']) moveVector.y -= speed;
 
-      camera.position.x = THREE.MathUtils.clamp(
-        camera.position.x,
+      const proposedPosition = camera.position.clone().add(moveVector);
+      const clampedX = THREE.MathUtils.clamp(
+        proposedPosition.x,
         -DETACHED_CAMERA_HALF_EXTENT,
         DETACHED_CAMERA_HALF_EXTENT,
       );
-      camera.position.z = THREE.MathUtils.clamp(
-        camera.position.z,
+      const clampedZ = THREE.MathUtils.clamp(
+        proposedPosition.z,
         -DETACHED_CAMERA_HALF_EXTENT,
         DETACHED_CAMERA_HALF_EXTENT,
       );
-      camera.position.y = Math.min(camera.position.y, DETACHED_CAMERA_MAX_HEIGHT);
+      const clampedY = Math.min(proposedPosition.y, DETACHED_CAMERA_MAX_HEIGHT);
 
-      // Update the controls target to be in front of the camera so rotating feels natural
-      const lookAtTarget = new THREE.Vector3();
-      camera.getWorldDirection(lookAtTarget);
-      controls.target.copy(camera.position).add(lookAtTarget.multiplyScalar(10));
+      const moved =
+        Math.abs(clampedX - camera.position.x) > 1e-6
+        || Math.abs(clampedY - camera.position.y) > 1e-6
+        || Math.abs(clampedZ - camera.position.z) > 1e-6;
+
+      camera.position.set(clampedX, clampedY, clampedZ);
+
+      if (moved) {
+        const lookAtTarget = new THREE.Vector3();
+        camera.getWorldDirection(lookAtTarget);
+        controls.target.copy(camera.position).add(lookAtTarget.multiplyScalar(10));
+      }
+
       controls.target.x = THREE.MathUtils.clamp(
         controls.target.x,
         -DETACHED_CAMERA_HALF_EXTENT,
@@ -1170,7 +1330,6 @@ const CameraController = ({
         DETACHED_CAMERA_HALF_EXTENT,
       );
       clampCameraAboveSurface();
-      clampTargetAboveSurface(controls);
       controls.update(); 
       return;
     }
@@ -1320,8 +1479,8 @@ const Scene: React.FC<SceneProps> = ({
     }
   }, [mapStartWorld]);
 
-  const [speed, setSpeed] = useState(0.25);
-  const speedRef = useRef(0.25);
+  const [speed, setSpeed] = useState(2);
+  const speedRef = useRef(2);
   useEffect(() => { speedRef.current = speed; }, [speed]);
 
   const [localPaused, setLocalPaused] = useState(false);
@@ -1687,9 +1846,6 @@ const Scene: React.FC<SceneProps> = ({
             >
               {localPaused || !isActivelyPlaying ? '▶' : '⏸'}
             </button>
-            <span style={{ color: '#9ca3af', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              Manual camera control
-            </span>
           </div>
         </div>
       )}
