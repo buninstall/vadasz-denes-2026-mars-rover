@@ -11,6 +11,8 @@ useGLTF.preload('/models/Rover.glb');
 useGLTF.preload('/models/Rocks.glb');
 useGLTF.preload('/models/Gold ore.glb');
 useGLTF.preload('/models/Crystal.glb');
+useGLTF.preload('/models/nagykavics.glb');
+useGLTF.preload('/models/szikla.glb');
 
 interface SceneProps {
   map: MapData;
@@ -40,6 +42,9 @@ const RENDER_DISTANCE = 1400;
 const TERRAIN_SIZE = 2200;
 const TERRAIN_SEGMENTS = 250;
 const ARRIVAL_THRESHOLD = 0.2;
+const CAMERA_GROUND_CLEARANCE = 2.3;
+const DETACHED_CAMERA_HALF_EXTENT = 50;
+const DETACHED_CAMERA_MAX_HEIGHT = 240;
 // ==================
 
 const GRID_SIZE = 50;
@@ -131,11 +136,16 @@ const estimateTerrainHeight = (wx: number, wz: number): number => {
 
 /** Extract first mesh geometry+material from a GLTF scene. */
 function extractFirstMesh(gltfScene: THREE.Group): { geo: THREE.BufferGeometry; mat: THREE.Material } | null {
+  gltfScene.updateWorldMatrix(true, true);
   let result: { geo: THREE.BufferGeometry; mat: THREE.Material } | null = null;
   gltfScene.traverse(child => {
     if (!result && (child as THREE.Mesh).isMesh) {
       const m = child as THREE.Mesh;
-      result = { geo: m.geometry, mat: Array.isArray(m.material) ? m.material[0] : m.material };
+      const geo = m.geometry.clone();
+      geo.applyMatrix4(m.matrixWorld);
+      geo.computeBoundingBox();
+      const mat = Array.isArray(m.material) ? m.material[0] : m.material;
+      result = { geo, mat };
     }
   });
   return result;
@@ -393,45 +403,278 @@ const RoverDustTrail = React.memo(({
   );
 });
 
-// ── Scenery: 300 rocks as ONE InstancedMesh — 1 draw call total
+// ── Scenery: dense deterministic Mars rock field (outside mission area)
 const SceneryInstanced = React.memo(() => {
-  const { scene: rockScene } = useGLTF('/models/Rocks.glb');
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const meshData = useMemo(() => extractFirstMesh(rockScene), [rockScene]);
-  const COUNT = 300;
+  const { scene: boulderScene } = useGLTF('/models/nagykavics.glb');
+  const { scene: cliffRockScene } = useGLTF('/models/szikla.glb');
 
-  const matrices = useMemo(() => {
-    const mats: THREE.Matrix4[] = [];
-    const dummy = new THREE.Object3D();
-    let idx = 0;
-    while (mats.length < COUNT && idx < COUNT * 8) {
-      const i = idx++;
-      const x = (seededRandom(i * 3, 7) - 0.5) * 1200;
-      const z = (seededRandom(i * 3 + 1, 13) - 0.5) * 1200;
-      // Only place scenery rocks OUTSIDE the play area
-      if (Math.abs(x) < PLAY_EDGE + 5 && Math.abs(z) < PLAY_EDGE + 5) continue;
-      const dist = Math.sqrt(x * x + z * z);
-      const sc = (seededRandom(i * 3 + 2, 19) * 30 + 10) * (dist > 200 ? dist / 100 : 1);
-      const embedDepth = Math.max(1, sc * 0.08);
-      dummy.position.set(x, estimateTerrainHeight(x, z) - embedDepth, z);
-      dummy.rotation.set(0, seededRandom(i, 5) * Math.PI * 2, 0);
-      dummy.scale.setScalar(sc);
-      dummy.updateMatrix();
-      mats.push(dummy.matrix.clone());
+  const boulderMeshRef = useRef<THREE.InstancedMesh>(null);
+  const cliffRockMeshRef = useRef<THREE.InstancedMesh>(null);
+
+  const boulderMeshData = useMemo(() => extractFirstMesh(boulderScene), [boulderScene]);
+  const cliffRockMeshData = useMemo(() => extractFirstMesh(cliffRockScene), [cliffRockScene]);
+
+  type RockBoundsInfo = {
+    baseSize: number;
+    supportPoints: THREE.Vector3[];
+    footprintRadius: number;
+  };
+
+  const getRockBounds = useCallback((geometry: THREE.BufferGeometry): RockBoundsInfo => {
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox ?? new THREE.Box3(
+      new THREE.Vector3(-0.5, -0.5, -0.5),
+      new THREE.Vector3(0.5, 0.5, 0.5),
+    );
+
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const baseSize = Math.max(size.x, size.y, size.z, 0.001);
+
+    const supportPoints: THREE.Vector3[] = [];
+    const pos = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+    const minY = box.min.y;
+    const lowBand = Math.max(size.y * 0.22, 0.08);
+    if (pos) {
+      const stride = Math.max(1, Math.floor(pos.count / 220));
+      for (let i = 0; i < pos.count; i += stride) {
+        const y = pos.getY(i);
+        if (y <= minY + lowBand) {
+          supportPoints.push(new THREE.Vector3(pos.getX(i), y, pos.getZ(i)));
+        }
+      }
     }
-    return mats;
+
+    if (supportPoints.length < 36) {
+      const steps = [0, 0.2, 0.4, 0.6, 0.8, 1];
+      for (let xi = 0; xi < steps.length; xi++) {
+        for (let zi = 0; zi < steps.length; zi++) {
+          supportPoints.push(
+            new THREE.Vector3(
+              THREE.MathUtils.lerp(box.min.x, box.max.x, steps[xi]),
+              minY,
+              THREE.MathUtils.lerp(box.min.z, box.max.z, steps[zi]),
+            ),
+          );
+        }
+      }
+    }
+
+    const maxSupportPoints = 180;
+    if (supportPoints.length > maxSupportPoints) {
+      const trimmed: THREE.Vector3[] = [];
+      const pickStride = Math.ceil(supportPoints.length / maxSupportPoints);
+      for (let i = 0; i < supportPoints.length && trimmed.length < maxSupportPoints; i += pickStride) {
+        trimmed.push(supportPoints[i]);
+      }
+      supportPoints.length = 0;
+      supportPoints.push(...trimmed);
+    }
+
+    let footprintRadius = 0;
+    for (let i = 0; i < supportPoints.length; i++) {
+      const point = supportPoints[i];
+      const radius = Math.hypot(point.x, point.z);
+      if (radius > footprintRadius) footprintRadius = radius;
+    }
+
+    return { baseSize, supportPoints, footprintRadius: Math.max(footprintRadius, 0.2) };
   }, []);
 
-  useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh || !matrices.length) return;
-    matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
-    mesh.instanceMatrix.needsUpdate = true;
-  }, [matrices]);
+  const boulderBounds = useMemo(
+    () => (boulderMeshData ? getRockBounds(boulderMeshData.geo) : null),
+    [boulderMeshData, getRockBounds],
+  );
+  const cliffRockBounds = useMemo(
+    () => (cliffRockMeshData ? getRockBounds(cliffRockMeshData.geo) : null),
+    [cliffRockMeshData, getRockBounds],
+  );
 
-  if (!meshData) return null;
+  const SCENERY_DENSITY_MULTIPLIER = 1.8;
+  const BOULDER_COUNT = Math.floor(760 * SCENERY_DENSITY_MULTIPLIER);
+  const CLIFF_ROCK_COUNT = Math.floor(420 * SCENERY_DENSITY_MULTIPLIER);
+
+  const innerRadius = PLAY_EDGE + 28;
+  const outerRadius = TERRAIN_SIZE * 0.46;
+  const terrainHalf = TERRAIN_SIZE * 0.5 - 10;
+  const playableHalf = (GRID_SIZE * CELL_SIZE) / 2;
+  const playablePadding = 10;
+
+  const buildMatrices = (
+    count: number,
+    seedBase: number,
+    targetSizeMin: number,
+    targetSizeMax: number,
+    maxTilt: number,
+    embedDepth: number,
+    nearBias: number,
+    radialJitter: number,
+    clusterChance: number,
+    baseRotationX: number,
+    bounds: RockBoundsInfo | null,
+  ): THREE.Matrix4[] => {
+    if (!bounds) return [];
+
+    const matrices: THREE.Matrix4[] = [];
+    const dummy = new THREE.Object3D();
+    const transformedSupport = new THREE.Vector3();
+
+    const clusterCenters = Array.from({ length: 34 }, (_, index) => {
+      const angle = seededRandom(seedBase + index * 17, 211) * Math.PI * 2;
+      const radiusT = Math.pow(seededRandom(seedBase + index * 29, 223), 0.65);
+      const radius = THREE.MathUtils.lerp(innerRadius + 40, outerRadius, radiusT);
+      return {
+        x: Math.cos(angle) * radius,
+        z: Math.sin(angle) * radius,
+      };
+    });
+
+    let attempts = 0;
+    const maxAttempts = count * 28;
+    while (matrices.length < count && attempts < maxAttempts) {
+      const i = attempts;
+      attempts++;
+      let x = 0;
+      let z = 0;
+
+      const shouldUseCluster = seededRandom(seedBase + i * 7, 307) < clusterChance;
+      if (shouldUseCluster) {
+        const center = clusterCenters[Math.floor(seededRandom(seedBase + i * 11, 313) * clusterCenters.length)];
+        const a = seededRandom(seedBase + i * 13, 317) * Math.PI * 2;
+        const r = THREE.MathUtils.lerp(4, 44, seededRandom(seedBase + i * 19, 331));
+        x = center.x + Math.cos(a) * r;
+        z = center.z + Math.sin(a) * r;
+      } else {
+        const a = seededRandom(seedBase + i * 23, 347) * Math.PI * 2;
+        const radiusT = Math.pow(seededRandom(seedBase + i * 31, 353), nearBias);
+        const r = THREE.MathUtils.lerp(innerRadius, outerRadius, radiusT);
+        x = Math.cos(a) * r + (seededRandom(seedBase + i * 37, 359) - 0.5) * radialJitter;
+        z = Math.sin(a) * r + (seededRandom(seedBase + i * 41, 367) - 0.5) * radialJitter;
+      }
+
+      if (Math.abs(x) < innerRadius && Math.abs(z) < innerRadius) {
+        if (Math.abs(x) > Math.abs(z)) {
+          x = Math.sign(x || 1) * (innerRadius + 6);
+        } else {
+          z = Math.sign(z || 1) * (innerRadius + 6);
+        }
+      }
+
+      const dist = Math.sqrt(x * x + z * z);
+      const distT = THREE.MathUtils.clamp((dist - innerRadius) / Math.max(outerRadius - innerRadius, 1), 0, 1);
+      const targetSize = THREE.MathUtils.lerp(
+        targetSizeMin,
+        targetSizeMax,
+        Math.pow(seededRandom(seedBase + i * 47, 379), 0.85),
+      );
+      const scale = (targetSize / bounds.baseSize) * THREE.MathUtils.lerp(1.0, 1.38, distT);
+      const footprintRadius = Math.max(0.5, bounds.footprintRadius * scale);
+
+      const centerBound = terrainHalf - footprintRadius;
+      if (centerBound <= playableHalf + playablePadding) {
+        continue;
+      }
+      x = THREE.MathUtils.clamp(x, -centerBound, centerBound);
+      z = THREE.MathUtils.clamp(z, -centerBound, centerBound);
+
+      if (Math.abs(x) < playableHalf + playablePadding && Math.abs(z) < playableHalf + playablePadding) {
+        continue;
+      }
+
+      const pitch = (seededRandom(seedBase + i * 53, 389) - 0.5) * maxTilt * 0.25;
+      const yaw = seededRandom(seedBase + i * 59, 397) * Math.PI * 2;
+      const roll = (seededRandom(seedBase + i * 61, 401) - 0.5) * maxTilt * 0.25;
+      dummy.rotation.set(baseRotationX + pitch, yaw, roll);
+      dummy.scale.setScalar(scale);
+
+      dummy.position.set(0, 0, 0);
+      dummy.updateMatrix();
+
+      let settleY = Infinity;
+      let minGround = Infinity;
+      let maxGround = -Infinity;
+      let invalidSupport = false;
+      for (let pointIndex = 0; pointIndex < bounds.supportPoints.length; pointIndex++) {
+        transformedSupport.copy(bounds.supportPoints[pointIndex]).applyMatrix4(dummy.matrix);
+        const sx = x + transformedSupport.x;
+        const sz = z + transformedSupport.z;
+        if (Math.abs(sx) > terrainHalf || Math.abs(sz) > terrainHalf) {
+          invalidSupport = true;
+          break;
+        }
+        if (Math.abs(sx) < playableHalf + 2 && Math.abs(sz) < playableHalf + 2) {
+          invalidSupport = true;
+          break;
+        }
+
+        const supportGround = estimateTerrainHeight(sx, sz);
+        const candidateY = supportGround - transformedSupport.y;
+        if (candidateY < settleY) {
+          settleY = candidateY;
+        }
+        if (supportGround < minGround) minGround = supportGround;
+        if (supportGround > maxGround) maxGround = supportGround;
+      }
+
+      if (invalidSupport || !Number.isFinite(settleY)) {
+        continue;
+      }
+
+      const localRelief = maxGround - minGround;
+      if (localRelief > 4.2) {
+        continue;
+      }
+
+      const settledY = settleY - embedDepth;
+
+      dummy.position.set(x, settledY, z);
+      dummy.updateMatrix();
+      matrices.push(dummy.matrix.clone());
+    }
+
+    return matrices;
+  };
+
+  const boulderMatrices = useMemo(
+    () => buildMatrices(BOULDER_COUNT, 5200, 4.2, 9.4, 0.2, 0.045, 0.72, 44, 0.34, 0, boulderBounds),
+    [boulderBounds],
+  );
+  const cliffRockMatrices = useMemo(
+    () => buildMatrices(CLIFF_ROCK_COUNT, 9200, 6.4, 13.8, 0.16, 0.05, 0.78, 52, 0.3, 0, cliffRockBounds),
+    [cliffRockBounds],
+  );
+
+  useEffect(() => {
+    const hydrate = (mesh: THREE.InstancedMesh | null, matrices: THREE.Matrix4[]) => {
+      if (!mesh || matrices.length === 0) return;
+      matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+      mesh.count = matrices.length;
+      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = false;
+    };
+
+    hydrate(boulderMeshRef.current, boulderMatrices);
+    hydrate(cliffRockMeshRef.current, cliffRockMatrices);
+  }, [boulderMatrices, cliffRockMatrices]);
+
   return (
-    <instancedMesh ref={meshRef} args={[meshData.geo, meshData.mat, COUNT]} castShadow receiveShadow />
+    <group>
+      {boulderMeshData && (
+        <instancedMesh
+          ref={boulderMeshRef}
+          args={[boulderMeshData.geo, boulderMeshData.mat, BOULDER_COUNT]}
+        />
+      )}
+      {cliffRockMeshData && (
+        <instancedMesh
+          ref={cliffRockMeshRef}
+          args={[cliffRockMeshData.geo, cliffRockMeshData.mat, CLIFF_ROCK_COUNT]}
+        />
+      )}
+    </group>
   );
 });
 
@@ -837,7 +1080,7 @@ const CameraController = ({
   mode: CameraMode
 }) => {
   const controlsRef = useRef<OrbitControlsImpl>(null);
-  const { camera, gl } = useThree();
+  const { camera } = useThree();
   const lastTargetRef = useRef(new THREE.Vector3());
   const initializedRef = useRef(false);
 
@@ -856,7 +1099,21 @@ const CameraController = ({
     };
   }, []);
 
-  useFrame((state, delta) => {
+  const clampCameraAboveSurface = useCallback(() => {
+    const minY = estimateTerrainHeight(camera.position.x, camera.position.z) + CAMERA_GROUND_CLEARANCE;
+    if (camera.position.y < minY) {
+      camera.position.y = minY;
+    }
+  }, [camera]);
+
+  const clampTargetAboveSurface = useCallback((controls: OrbitControlsImpl) => {
+    const minTargetY = estimateTerrainHeight(controls.target.x, controls.target.z) + 0.4;
+    if (controls.target.y < minTargetY) {
+      controls.target.y = minTargetY;
+    }
+  }, []);
+
+  useFrame((_, delta) => {
     const controls = controlsRef.current;
     if (!controls) return;
 
@@ -886,10 +1143,34 @@ const CameraController = ({
       if (keys.current['q']) camera.position.y += speed;
       if (keys.current['e']) camera.position.y -= speed;
 
+      camera.position.x = THREE.MathUtils.clamp(
+        camera.position.x,
+        -DETACHED_CAMERA_HALF_EXTENT,
+        DETACHED_CAMERA_HALF_EXTENT,
+      );
+      camera.position.z = THREE.MathUtils.clamp(
+        camera.position.z,
+        -DETACHED_CAMERA_HALF_EXTENT,
+        DETACHED_CAMERA_HALF_EXTENT,
+      );
+      camera.position.y = Math.min(camera.position.y, DETACHED_CAMERA_MAX_HEIGHT);
+
       // Update the controls target to be in front of the camera so rotating feels natural
       const lookAtTarget = new THREE.Vector3();
       camera.getWorldDirection(lookAtTarget);
       controls.target.copy(camera.position).add(lookAtTarget.multiplyScalar(10));
+      controls.target.x = THREE.MathUtils.clamp(
+        controls.target.x,
+        -DETACHED_CAMERA_HALF_EXTENT,
+        DETACHED_CAMERA_HALF_EXTENT,
+      );
+      controls.target.z = THREE.MathUtils.clamp(
+        controls.target.z,
+        -DETACHED_CAMERA_HALF_EXTENT,
+        DETACHED_CAMERA_HALF_EXTENT,
+      );
+      clampCameraAboveSurface();
+      clampTargetAboveSurface(controls);
       controls.update(); 
       return;
     }
@@ -898,6 +1179,8 @@ const CameraController = ({
       const target = new THREE.Vector3(0, 0, 0); // Center of map
       camera.position.lerp(new THREE.Vector3(0, 150, 0.1), Math.min(1, 4 * delta));
       controls.target.lerp(target, Math.min(1, 4 * delta));
+      clampCameraAboveSurface();
+      clampTargetAboveSurface(controls);
       controls.update();
       return;
     }
@@ -910,6 +1193,8 @@ const CameraController = ({
       controls.target.copy(target);
       lastTargetRef.current.copy(target);
       initializedRef.current = true;
+      clampCameraAboveSurface();
+      clampTargetAboveSurface(controls);
       controls.update();
       return;
     }
@@ -918,6 +1203,8 @@ const CameraController = ({
     camera.position.add(tDelta);
     controls.target.copy(target);
     lastTargetRef.current.copy(target);
+    clampCameraAboveSurface();
+    clampTargetAboveSurface(controls);
     controls.update();
   });
 
@@ -929,6 +1216,7 @@ const CameraController = ({
       enableRotate={true}
       enableDamping={true}
       dampingFactor={0.08}
+      zoomSpeed={2.8}
       minDistance={mode === 'top' ? 20 : 8}
       maxDistance={600}
       maxPolarAngle={mode === 'top' ? 0.1 : Math.PI / 2.05}
@@ -1207,7 +1495,7 @@ const Scene: React.FC<SceneProps> = ({
     <div className="w-full h-screen absolute inset-0 z-0">
       <Canvas
         shadows
-        camera={{ position: startPos, fov: 60, far: RENDER_DISTANCE * 2, near: 0.1 }}
+        camera={{ position: startPos, fov: 60, far: RENDER_DISTANCE * 4, near: 0.1 }}
         gl={{ logarithmicDepthBuffer: true }}
         frameloop="always"
       >
@@ -1310,7 +1598,6 @@ const Scene: React.FC<SceneProps> = ({
             <Vignette eskil={false} offset={0.1} darkness={1.0} />
           </EffectComposer>
 
-          <fog attach="fog" args={[fogColor, 10, RENDER_DISTANCE]} />
           <CameraController roverPosRef={roverPosRef} mode={cameraMode} />
         </Suspense>
       </Canvas>
