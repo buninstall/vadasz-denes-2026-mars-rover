@@ -7,10 +7,19 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
 
+def normalize_noise_map(noise_map):
+    """Normalize a noise map to the 0-1 range safely."""
+    min_value = noise_map.min()
+    max_value = noise_map.max()
+
+    if max_value == min_value:
+        return np.zeros_like(noise_map)
+
+    return (noise_map - min_value) / (max_value - min_value)
+
+
 def perlin_noise_2d(x, y, seed=0):
     """Simple 2D Perlin-like noise implementation."""
-    np.random.seed(seed)
-
     def fade(t):
         return t * t * t * (t * (t * 6 - 15) + 10)
 
@@ -66,10 +75,7 @@ def generate_noise_map(width, height, scale, octaves, seed):
             noise_map[y][x] = noise_value
 
     # Normalize to 0-1 range
-    noise_map = (noise_map - noise_map.min()) / (
-        noise_map.max() - noise_map.min()
-    )
-    return noise_map
+    return normalize_noise_map(noise_map)
 
 
 def add_sine_waves(noise_map, width, height, seed):
@@ -91,11 +97,62 @@ def add_sine_waves(noise_map, width, height, seed):
                 )
                 wave_map[y][x] += wave_value * amplitude
 
-    wave_map = (wave_map - wave_map.min()) / (
-        wave_map.max() - wave_map.min()
-    )
+    wave_map = normalize_noise_map(wave_map)
     combined = noise_map * 0.7 + wave_map * 0.3
-    return combined
+    return normalize_noise_map(combined)
+
+
+def pick_cluster_origins(noise_map, target_count, threshold, min_distance, seed):
+    """Pick cluster origins from high-noise local maxima with spacing rules."""
+    random.seed(seed)
+    height, width = noise_map.shape
+    min_distance_sq = min_distance * min_distance
+
+    candidates = []
+    for y in range(height):
+        y0 = max(0, y - 1)
+        y1 = min(height, y + 2)
+
+        for x in range(width):
+            value = noise_map[y][x]
+            if value < threshold:
+                continue
+
+            x0 = max(0, x - 1)
+            x1 = min(width, x + 2)
+            neighborhood = noise_map[y0:y1, x0:x1]
+
+            # Keep only local peaks to avoid grid-like regularity.
+            if value < neighborhood.max():
+                continue
+
+            score = value + random.uniform(0.0, 0.06)
+            candidates.append((score, x, y))
+
+    if not candidates:
+        return []
+
+    candidates.sort(reverse=True)
+    selected = []
+
+    for _, x, y in candidates:
+        if all(
+            (x - sx) * (x - sx) + (y - sy) * (y - sy)
+            >= min_distance_sq
+            for sx, sy in selected
+        ):
+            selected.append((x, y))
+            if len(selected) >= target_count:
+                return selected
+
+    # Fallback pass if spacing was too strict.
+    for _, x, y in candidates:
+        if (x, y) not in selected:
+            selected.append((x, y))
+            if len(selected) >= target_count:
+                break
+
+    return selected
 
 
 def generate_amorphous_cluster(seed, size_range=(8, 16)):
@@ -331,47 +388,86 @@ def place_clean_cluster(mars_map, x, y, symbol, width, height, seed):
 
 
 def generate_terrain_with_clusters(width, height, seed):
-    """Generate terrain by placing discrete amorphous clusters."""
+    """Generate terrain by placing noise-driven amorphous clusters."""
     mars_map = [["." for _ in range(width)] for _ in range(height)]
     random.seed(seed)
 
-    # Generate noise maps to determine WHERE clusters spawn
-    blue_noise = generate_noise_map(width, height, 15, 3, seed + 1)
-    yellow_noise = generate_noise_map(width, height, 18, 3, seed + 2)
-    green_noise = generate_noise_map(width, height, 20, 3, seed + 3)
-    obstacle_noise = generate_noise_map(width, height, 12, 3, seed + 4)
+    # Build layered noise fields for natural, non-grid origin selection.
+    blue_noise = add_sine_waves(
+        generate_noise_map(width, height, 14, 3, seed + 1),
+        width,
+        height,
+        seed + 101,
+    )
+    yellow_noise = add_sine_waves(
+        generate_noise_map(width, height, 17, 3, seed + 2),
+        width,
+        height,
+        seed + 102,
+    )
+    green_noise = add_sine_waves(
+        generate_noise_map(width, height, 20, 3, seed + 3),
+        width,
+        height,
+        seed + 103,
+    )
+    obstacle_noise = add_sine_waves(
+        generate_noise_map(width, height, 11, 3, seed + 4),
+        width,
+        height,
+        seed + 104,
+    )
 
-    # Place blue mineral clusters
-    for y in range(0, height, 6):
-        for x in range(0, width, 6):
-            if blue_noise[y][x] > 0.68:
-                place_clean_cluster(
-                    mars_map, x, y, "B", width, height, seed + x + y
-                )
+    area = width * height
 
-    # Place yellow mineral clusters
-    for y in range(0, height, 7):
-        for x in range(0, width, 7):
-            if yellow_noise[y][x] > 0.70:
-                place_clean_cluster(
-                    mars_map, x, y, "Y", width, height, seed + x + y + 1000
-                )
+    blue_origins = pick_cluster_origins(
+        blue_noise,
+        target_count=max(8, int(area / 125)),
+        threshold=0.63,
+        min_distance=4,
+        seed=seed + 1001,
+    )
+    yellow_origins = pick_cluster_origins(
+        yellow_noise,
+        target_count=max(7, int(area / 145)),
+        threshold=0.64,
+        min_distance=4,
+        seed=seed + 1002,
+    )
+    green_origins = pick_cluster_origins(
+        green_noise,
+        target_count=max(6, int(area / 155)),
+        threshold=0.65,
+        min_distance=4,
+        seed=seed + 1003,
+    )
+    obstacle_origins = pick_cluster_origins(
+        obstacle_noise,
+        target_count=max(10, int(area / 115)),
+        threshold=0.66,
+        min_distance=3,
+        seed=seed + 1004,
+    )
 
-    # Place green mineral clusters
-    for y in range(0, height, 8):
-        for x in range(0, width, 8):
-            if green_noise[y][x] > 0.72:
-                place_clean_cluster(
-                    mars_map, x, y, "G", width, height, seed + x + y + 2000
-                )
+    for x, y in blue_origins:
+        place_clean_cluster(
+            mars_map, x, y, "B", width, height, seed + x + y + 2000
+        )
 
-    # Place obstacle clusters
-    for y in range(0, height, 5):
-        for x in range(0, width, 5):
-            if obstacle_noise[y][x] > 0.73:
-                place_clean_cluster(
-                    mars_map, x, y, "#", width, height, seed + x + y + 3000
-                )
+    for x, y in yellow_origins:
+        place_clean_cluster(
+            mars_map, x, y, "Y", width, height, seed + x + y + 3000
+        )
+
+    for x, y in green_origins:
+        place_clean_cluster(
+            mars_map, x, y, "G", width, height, seed + x + y + 4000
+        )
+
+    for x, y in obstacle_origins:
+        place_clean_cluster(
+            mars_map, x, y, "#", width, height, seed + x + y + 5000
+        )
 
     return mars_map
 
@@ -462,19 +558,32 @@ if __name__ == "__main__":
     print(f"Generating {num_maps} Mars maps with amorphous clusters...")
 
     completed = 0
+    failed = 0
+    max_pending = max(200, num_workers * 20)
+
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(generate_and_save_map, task): task for task in tasks}
+        for batch_start in range(0, num_maps, max_pending):
+            batch_tasks = tasks[batch_start : batch_start + max_pending]
+            futures = [
+                executor.submit(generate_and_save_map, task)
+                for task in batch_tasks
+            ]
 
-        for future in as_completed(futures):
-            try:
-                result = future.result()
-                completed += 1
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                    completed += 1
 
-                # Print progress every 100 maps
-                if completed % 100 == 0:
-                    print(f"Generated {completed}/{num_maps} maps...")
-            except Exception as e:
-                print(f"Error generating map: {e}")
+                    # Print progress every 100 maps
+                    if completed % 100 == 0:
+                        print(f"Generated {completed}/{num_maps} maps...")
+                except Exception as e:
+                    failed += 1
+                    print(f"Error generating map: {e}")
 
-    print(f"\nCompleted! All {num_maps} maps saved in '{output_dir}/' directory")
+    print(
+        f"\nCompleted! Generated {completed}/{num_maps} maps in '{output_dir}/' directory"
+    )
+    if failed > 0:
+        print(f"Failed generations: {failed}")
     print(f"Files: mars_map_00001.csv to mars_map_{num_maps:05d}.csv")
