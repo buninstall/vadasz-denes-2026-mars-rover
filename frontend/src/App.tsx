@@ -114,7 +114,6 @@ export default function App() {
   const isMissionFinished =
     !!simulationResult && currentStep >= Math.max(simulationResult.path.length - 1, 0) && !isPlaying;
   const showPostMissionReport = isMissionFinished && !reportDismissed;
-  const showSuccessfulReportOnly = showPostMissionReport && !!simulationResult?.success;
 
   const handleStep = useCallback((step: number) => {
     setCurrentStep(step);
@@ -184,28 +183,25 @@ export default function App() {
     <div className="app-shell">
       <LoadingScreen onLoaded={() => setIsLoaded(true)} />
 
-      {!showSuccessfulReportOnly && (
-        <div
-          className="scene-layer"
-          style={{
-            opacity: isLoaded ? 1 : 0,
-            pointerEvents: isLoaded ? 'auto' : 'none',
-          }}
-        >
-          <Scene
-            map={map}
-            simulationResult={simulationResult}
-            isPlaying={isPlaying}
-            stepDurationSec={0.06}
-            onStep={handleStep}
-            onComplete={handleComplete}
-            stepOverride={stepOverride}
-            hideHudOverlay={showSuccessfulReportOnly}
-          />
-        </div>
-      )}
+      <div
+        className="scene-layer"
+        style={{
+          opacity: isLoaded ? 1 : 0,
+          pointerEvents: isLoaded ? 'auto' : 'none',
+        }}
+      >
+        <Scene
+          map={map}
+          simulationResult={simulationResult}
+          isPlaying={isPlaying}
+          stepDurationSec={0.06}
+          onStep={handleStep}
+          onComplete={handleComplete}
+          stepOverride={stepOverride}
+        />
+      </div>
 
-      {isLoaded && !showSuccessfulReportOnly && (
+      {isLoaded && (
         <div className="mission-shell">
           <div className="mission-column mission-column--primary">
             <div className="pointer-events-auto">
@@ -239,7 +235,7 @@ export default function App() {
         </div>
       )}
 
-      {isLoaded && !showSuccessfulReportOnly && (
+      {isLoaded && (
         <Minimap
           map={map}
           simulationResult={simulationResult}

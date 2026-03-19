@@ -4,10 +4,12 @@ from .config import MAX_SIMULATION_STEPS, MIN_TIME_LIMIT_HOURS
 from .mission import CYCLE, DAY_STEPS, MAX_BATTERY, MarsMission
 from .planner import RoverPlanner
 
+Position = tuple[int, int]
+
 
 def _build_log_entry(
     step: int,
-    position: tuple[int, int],
+    position: Position,
     battery: float,
     speed: int,
     total_distance: int,
@@ -32,6 +34,7 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
     planner = RoverPlanner(mission)
 
     pos = mission.start_pos
+    active_target: Position | None = None
     battery = float(MAX_BATTERY)
     remaining_minerals = set(mission.minerals.keys())
     step = 0
@@ -50,6 +53,24 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
     time_budget_steps = max(1, effective_hours * 2)
     max_steps = min(MAX_SIMULATION_STEPS, time_budget_steps)
 
+    def standby(reason: str) -> bool:
+        nonlocal battery, step, termination_reason
+
+        if step >= max_steps:
+            return False
+
+        battery = planner._standby_battery(battery, step)
+        step += 1
+        path.append(list(pos))
+        battery_log.append(round(battery, 2))
+        logs.append(_build_log_entry(step, pos, battery, 0, total_distance, [], "move"))
+
+        if battery <= 0:
+            termination_reason = reason
+            return False
+
+        return True
+
     def mine_current_position() -> bool:
         nonlocal battery, step, termination_reason
 
@@ -60,8 +81,8 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
         mineral_type = mission.minerals[pos]
         remaining_minerals.remove(pos)
         planner.clear_mineral(pos)
-
         step += 1
+
         minerals_collected.append(
             {
                 "pos": list(pos),
@@ -80,67 +101,96 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
 
     while step < max_steps:
         if mine_current_position():
+            active_target = None
             if termination_reason == "battery_depleted_mining":
                 break
             continue
 
-        selection = planner.choose_next_target(
-            pos,
-            battery,
-            step,
-            remaining_minerals,
-            max_steps,
-        )
-        target = selection[0] if selection is not None else None
+        if (
+            active_target is not None
+            and active_target != mission.start_pos
+            and active_target not in remaining_minerals
+        ):
+            active_target = None
 
-        if target is None and remaining_minerals:
+        if not remaining_minerals:
+            active_target = mission.start_pos
+        else:
+            selection = planner.choose_next_target(
+                pos,
+                battery,
+                step,
+                remaining_minerals,
+                max_steps,
+            )
+            candidate_target = selection[0] if selection is not None else None
+
+            if active_target is None:
+                active_target = candidate_target
+            elif active_target not in remaining_minerals:
+                active_target = candidate_target
+            elif candidate_target is not None and candidate_target != active_target:
+                active_path = planner.get_path(pos, active_target, passable_cells=(pos, active_target))
+                candidate_path = planner.get_path(pos, candidate_target, passable_cells=(pos, candidate_target))
+
+                active_distance = len(active_path) if active_path else 10_000
+                candidate_distance = len(candidate_path) if candidate_path else 10_000
+
+                if candidate_distance + 1 < active_distance:
+                    active_target = candidate_target
+
+        if active_target is None:
             if pos != mission.start_pos:
-                target = mission.start_pos
+                active_target = mission.start_pos
             else:
-                if battery < MAX_BATTERY:
-                    battery = planner._standby_battery(battery, step)
-                    step += 1
-                    path.append(list(pos))
-                    battery_log.append(round(battery, 2))
-                    logs.append(_build_log_entry(step, pos, battery, 0, total_distance, [], "move"))
-                    if battery <= 0:
-                        termination_reason = "battery_depleted_waiting"
+                if planner._is_day(step) and battery < MAX_BATTERY:
+                    if not standby("battery_depleted_waiting"):
                         break
                     continue
 
                 termination_reason = "no_feasible_target"
                 break
-        elif target is None and pos != mission.start_pos:
-            target = mission.start_pos
-        elif target is None:
-            termination_reason = "completed"
-            break
+
+        target = active_target
+        if target == pos:
+            if target == mission.start_pos and not remaining_minerals:
+                termination_reason = "completed"
+                break
+            active_target = None
+            continue
 
         current_path = planner.get_path(pos, target, passable_cells=(pos, target))
-        home_path = (
-            planner.get_path(
+        if not current_path:
+            if target != mission.start_pos:
+                active_target = None
+                continue
+
+            termination_reason = "no_path_home"
+            break
+
+        home_path = []
+        if target != mission.start_pos:
+            home_path = planner.get_path(
                 target,
                 mission.start_pos,
                 passable_cells=(target, mission.start_pos),
             )
-            if target != mission.start_pos
-            else []
-        )
+            if not home_path:
+                active_target = None
+                continue
+
         reserve_blocks = len(current_path) + len(home_path)
-        safe_speed = planner.pick_route_speed(reserve_blocks, battery, step)
-        if total_distance == 0 and pos == mission.start_pos:
-            safe_speed = min(safe_speed, 1)
-        dist_moved = min(len(current_path), safe_speed)
+        safe_speed = planner.pick_route_speed(
+            reserve_blocks,
+            battery,
+            step,
+            max_speed=1,
+        )
+        dist_moved = 1 if safe_speed > 0 and len(current_path) > 0 else 0
 
         if dist_moved <= 0:
             if planner._is_day(step) and battery < MAX_BATTERY:
-                battery = planner._standby_battery(battery, step)
-                step += 1
-                path.append(list(pos))
-                battery_log.append(round(battery, 2))
-                logs.append(_build_log_entry(step, pos, battery, 0, total_distance, [], "move"))
-                if battery <= 0:
-                    termination_reason = "battery_depleted_recharging"
+                if not standby("battery_depleted_recharging"):
                     break
                 continue
 
@@ -148,6 +198,10 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
             break
 
         new_pos = current_path[dist_moved - 1]
+        if new_pos in mission.obstacles:
+            termination_reason = "invalid_obstacle_step"
+            break
+
         battery = planner._move_battery(battery, step, dist_moved)
 
         step += 1
@@ -162,12 +216,11 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
             termination_reason = "battery_depleted"
             break
 
-        if mine_current_position() and termination_reason == "battery_depleted_mining":
-            break
-
-        if pos == mission.start_pos and target == mission.start_pos and not remaining_minerals:
-            termination_reason = "completed"
-            break
+        if pos == target:
+            if target == mission.start_pos and not remaining_minerals:
+                termination_reason = "completed"
+                break
+            active_target = None
 
     if termination_reason == "unknown":
         termination_reason = "time_budget_reached" if step >= max_steps else "ended"

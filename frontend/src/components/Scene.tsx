@@ -28,9 +28,8 @@ interface SceneProps {
 // ==== SETTINGS ====
 const ROVER_GROUND_CLEARANCE = 0.04;
 const ROVER_SCALE = 0.7;
-const OBSTACLE_HEIGHT_OFFSET = -1.2;
+const OBSTACLE_GROUND_CLEARANCE = 0.03;
 const OBSTACLE_SCALE = 4.5;
-const OBSTACLE_RANDOM_OFFSET = 0.5;
 const MINERAL_GROUND_CLEARANCE = 0.02;
 const GOLD_GROUND_CLEARANCE = 0.04;
 const MINERAL_SCALE = 0.15;
@@ -39,7 +38,7 @@ const MINERAL_RANDOM_OFFSET = 0.6;
 const RENDER_DISTANCE = 1400;
 const TERRAIN_SIZE = 2200;
 const TERRAIN_SEGMENTS = 250;
-const ARRIVAL_THRESHOLD = 1.2;
+const ARRIVAL_THRESHOLD = 0.2;
 // ==================
 
 const GRID_SIZE = 50;
@@ -497,64 +496,40 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
   useFrame((_, delta) => {
     if (!roverRef.current || pathPoints.length === 0) return;
 
-    const frameDelta = Math.min(delta, 1 / 30);
-
     const idx = Math.min(stepRef.current, pathPoints.length - 1);
     const target = pathPoints[idx];
     const position = roverRef.current.position;
     const velocity = velocityRef.current;
 
-    const directToTarget = new THREE.Vector2(target.x - position.x, target.z - position.z);
-    const directDistance = directToTarget.length();
-    const maxNavigateStep = CELL_SIZE * 1.05;
-    const hasLongHop = directDistance > maxNavigateStep;
-    const navTargetX = hasLongHop
-      ? position.x + (directToTarget.x / directDistance) * CELL_SIZE
-      : target.x;
-    const navTargetZ = hasLongHop
-      ? position.z + (directToTarget.y / directDistance) * CELL_SIZE
-      : target.z;
+    const toTargetX = target.x - position.x;
+    const toTargetZ = target.z - position.z;
+    const horizontalDistance = Math.hypot(toTargetX, toTargetZ);
 
-    const spd = Math.max(0.1, speedRef.current);
-    const accelScale = (isMiningRef.current ? 6 : 18) * spd;
-    const maxHorizontalSpeed = 14 * spd;
-    
-    // Stop applying acceleration if we reached the final waypoint
-    const distToTarget = Math.hypot(target.x - position.x, target.z - position.z);
-    const isAtEnd = idx === pathPoints.length - 1 && distToTarget < 0.1;
-    
-    if (!isAtEnd) {
-      velocity.x += THREE.MathUtils.clamp((navTargetX - position.x) * accelScale, -20 * spd, 20 * spd) * frameDelta;
-      velocity.z += THREE.MathUtils.clamp((navTargetZ - position.z) * accelScale, -20 * spd, 20 * spd) * frameDelta;
+    const speedMultiplier = Math.max(0.1, speedRef.current);
+    const moveSpeed = (isMiningRef.current ? 2.2 : 5.8) * speedMultiplier;
+
+    if (horizontalDistance > 0.0001) {
+      const moveStep = Math.min(horizontalDistance, moveSpeed * delta);
+      const moveX = (toTargetX / horizontalDistance) * moveStep;
+      const moveZ = (toTargetZ / horizontalDistance) * moveStep;
+      position.x += moveX;
+      position.z += moveZ;
+      velocity.x = moveX / Math.max(delta, 1e-5);
+      velocity.z = moveZ / Math.max(delta, 1e-5);
+    } else {
+      position.x = target.x;
+      position.z = target.z;
+      velocity.x = 0;
+      velocity.z = 0;
     }
-
-    const horizontalDamping = isAtEnd ? Math.exp(-15 * frameDelta) : Math.exp(-6 * frameDelta);
-    velocity.x *= horizontalDamping;
-    velocity.z *= horizontalDamping;
-
-    const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
-    if (horizontalSpeed > maxHorizontalSpeed && !isAtEnd) {
-      const scale = maxHorizontalSpeed / horizontalSpeed;
-      velocity.x *= scale;
-      velocity.z *= scale;
-    }
-
-    position.x += velocity.x * frameDelta;
-    position.z += velocity.z * frameDelta;
 
     const desiredY = estimateTerrainHeight(position.x, position.z) + groundOffset + ROVER_GROUND_CLEARANCE;
-    velocity.y += (desiredY - position.y) * 50 * frameDelta;
-    velocity.y -= 7.5 * frameDelta;
-    velocity.y *= Math.exp(-7.5 * frameDelta);
-    position.y += velocity.y * frameDelta;
-
-    if (position.y < desiredY) {
-      position.y = desiredY;
-      if (velocity.y < 0) velocity.y = 0;
-    }
+    position.y = THREE.MathUtils.lerp(position.y, desiredY, Math.min(1, 10 * delta));
 
     // Update shared rover position ref for sync
     roverPosRef.current.copy(position);
+
+    const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
 
     if (horizontalSpeed > 0.05) {
       headingRef.current.set(velocity.x, velocity.z).normalize();
@@ -562,7 +537,7 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
 
     const targetYaw = Math.atan2(headingRef.current.x, headingRef.current.y);
     const yawDiff = ((targetYaw - yawRef.current + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    yawRef.current += yawDiff * Math.min(1, 10 * frameDelta);
+    yawRef.current += yawDiff * Math.min(1, 10 * delta);
     roverRef.current.rotation.y = yawRef.current;
 
     const dirX = headingRef.current.x;
@@ -582,16 +557,16 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     roverRef.current.rotation.x = THREE.MathUtils.lerp(
       roverRef.current.rotation.x,
       targetPitch,
-      Math.min(1, 8 * frameDelta),
+      Math.min(1, 8 * delta),
     );
     roverRef.current.rotation.z = THREE.MathUtils.lerp(
       roverRef.current.rotation.z,
       targetRoll,
-      Math.min(1, 8 * frameDelta),
+      Math.min(1, 8 * delta),
     );
 
     if (isMiningRef.current) {
-      const vibration = Math.sin(Date.now() * 0.025) * 0.004;
+      const vibration = Math.sin(Date.now() * 0.025) * 0.0014;
       roverRef.current.position.y += vibration;
     }
   });
@@ -603,41 +578,42 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
   );
 });
 
-// ── All obstacles as ONE InstancedMesh — 1 draw call total
-const ObstaclesInstanced = React.memo(({ map }: { map: MapData }) => {
+// ── Obstacles placed cell-to-cell like minerals (no random offset)
+const Obstacles = React.memo(({ map }: { map: MapData }) => {
   const { scene: rockScene } = useGLTF('/models/Rocks.glb');
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const meshData = useMemo(() => extractFirstMesh(rockScene), [rockScene]);
+  const groundOffset = useMemo(
+    () => getModelGroundOffset(rockScene, '/models/Rocks.glb', OBSTACLE_SCALE),
+    [rockScene],
+  );
 
-  const transforms = useMemo(() => {
-    const result: { x: number; y: number; z: number; rot: number }[] = [];
+  const obstacleCells = useMemo(() => {
+    const result: { key: string; x: number; y: number; z: number; rot: number }[] = [];
     map.grid.forEach((row, gridY) =>
       row.forEach((cell, gridX) => {
         if (cell !== '#') return;
-        const [wx, , wz] = getRandomizedPosition(gridX, gridY, OBSTACLE_RANDOM_OFFSET);
-        result.push({ x: wx, y: estimateTerrainHeight(wx, wz) + OBSTACLE_HEIGHT_OFFSET, z: wz, rot: getRandomRotation(gridX, gridY) });
+        const [wx, , wz] = getPosition(gridX, gridY);
+        result.push({
+          key: `obs-${gridY}-${gridX}`,
+          x: wx,
+          y: estimateTerrainHeight(wx, wz) + groundOffset + OBSTACLE_GROUND_CLEARANCE,
+          z: wz,
+          rot: getRandomRotation(gridX, gridY),
+        });
       })
     );
     return result;
-  }, [map]);
+  }, [map, groundOffset]);
 
-  useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh || !transforms.length || !meshData) return;
-    const dummy = new THREE.Object3D();
-    transforms.forEach(({ x, y, z, rot }, i) => {
-      dummy.position.set(x, y, z);
-      dummy.rotation.set(0, rot, 0);
-      dummy.scale.setScalar(OBSTACLE_SCALE);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-  }, [transforms, meshData]);
+  if (!obstacleCells.length) return null;
 
-  if (!meshData || !transforms.length) return null;
   return (
-    <instancedMesh ref={meshRef} args={[meshData.geo, meshData.mat, transforms.length]} castShadow receiveShadow />
+    <>
+      {obstacleCells.map(({ key, x, y, z, rot }) => (
+        <group key={key} position={[x, y, z]} rotation={[0, rot, 0]}>
+          <Clone object={rockScene} scale={OBSTACLE_SCALE} castShadow receiveShadow />
+        </group>
+      ))}
+    </>
   );
 });
 
@@ -1017,22 +993,41 @@ const Scene: React.FC<SceneProps> = ({
 
   // Reset on new simulation
   useEffect(() => {
-    if (isPlaying) {
-      stepRef.current = 0;
-      isMiningRef.current = false;
-      setLocalPaused(false);
-      setCollectedStep(0);
-      if (simulationResult) {
-        const [row, col] = simulationResult.start;
-        roverPosRef.current.set(col * CELL_SIZE - OFFSET, 0, row * CELL_SIZE - OFFSET);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying]);
+    if (!isPlaying || !simulationResult) return;
+    stepRef.current = 0;
+    isMiningRef.current = false;
+    setLocalPaused(false);
+    setCollectedStep(0);
+    const [row, col] = simulationResult.start;
+    roverPosRef.current.set(col * CELL_SIZE - OFFSET, 0, row * CELL_SIZE - OFFSET);
+  }, [isPlaying, simulationResult]);
 
   const pathPoints = useMemo<THREE.Vector3[]>(() => {
     if (!simulationResult) return [];
-    return simulationResult.path.map(([row, col]) =>
+    const [startRow, startCol] = simulationResult.start;
+    const normalizedPath: [number, number][] = [...simulationResult.path];
+
+    if (
+      normalizedPath.length === 0
+      || normalizedPath[0][0] !== startRow
+      || normalizedPath[0][1] !== startCol
+    ) {
+      normalizedPath.unshift([startRow, startCol]);
+    }
+
+    const lastPoint = normalizedPath[normalizedPath.length - 1];
+    if (
+      simulationResult.returned_home
+      && (
+        !lastPoint
+        || lastPoint[0] !== startRow
+        || lastPoint[1] !== startCol
+      )
+    ) {
+      normalizedPath.push([startRow, startCol]);
+    }
+
+    return normalizedPath.map(([row, col]) =>
       new THREE.Vector3(col * CELL_SIZE - OFFSET, 0, row * CELL_SIZE - OFFSET)
     );
   }, [simulationResult]);
@@ -1102,7 +1097,7 @@ const Scene: React.FC<SceneProps> = ({
     if (!simulationResult?.logs?.length) return null;
     return simulationResult.logs[Math.min(collectedStep, simulationResult.logs.length - 1)] ?? null;
   }, [simulationResult, collectedStep]);
-  const isMiningNow = currentLog?.action === 'mine' && (currentLog?.minerals_collected?.length ?? 0) > 0;
+  const isMiningNow = currentLog?.action === 'mine';
 
   const isDay = currentLog?.is_day ?? true;
   const simHour = currentLog ? (6 + currentLog.time_hours) % 24 : 12;
@@ -1213,7 +1208,7 @@ const Scene: React.FC<SceneProps> = ({
 
           {pathPoints.length > 0 && <PathLine pathPoints={pathPoints} currentStep={collectedStep} />}
 
-          <ObstaclesInstanced map={map} />
+          <Obstacles map={map} />
 
           <MapMinerals
             map={map}

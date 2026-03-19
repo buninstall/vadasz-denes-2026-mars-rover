@@ -9,14 +9,22 @@ def load_map_from_csv(file_path: str | Path) -> list[list[str]] | None:
     grid: list[list[str]] = []
 
     try:
-        with Path(file_path).open("r") as handle:
-            reader = csv.reader(handle, skipinitialspace=True)
-            for row in reader:
-                clean_row = [cell.strip() for cell in row if cell.strip()]
-                if clean_row:
-                    grid.append(clean_row)
+        content = Path(file_path).read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
+
+    non_empty_lines = [line for line in content.splitlines() if line.strip()]
+    if not non_empty_lines:
+        return grid
+
+    sample_line = non_empty_lines[0]
+    delimiter = ";" if sample_line.count(";") > sample_line.count(",") else ","
+    reader = csv.reader(non_empty_lines, delimiter=delimiter, skipinitialspace=True)
+
+    for row in reader:
+        clean_row = [cell.strip() for cell in row if cell.strip()]
+        if clean_row:
+            grid.append(clean_row)
 
     return grid
 

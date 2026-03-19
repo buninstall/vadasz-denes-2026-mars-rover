@@ -84,6 +84,15 @@ class RoverPlanner:
                 if next_index in self._obstacle_indices:
                     continue
 
+                if abs(delta_row) == 1 and abs(delta_column) == 1:
+                    orthogonal_a = (row + delta_row) * GRID_SIZE + column
+                    orthogonal_b = row * GRID_SIZE + (column + delta_column)
+                    if (
+                        orthogonal_a in self._obstacle_indices
+                        or orthogonal_b in self._obstacle_indices
+                    ):
+                        continue
+
                 cell_neighbors.append(next_index)
 
             neighbors.append(tuple(cell_neighbors))
@@ -159,12 +168,18 @@ class RoverPlanner:
 
         return True
 
-    def pick_route_speed(self, remaining_blocks: int, battery: float, step: int) -> int:
+    def pick_route_speed(
+        self,
+        remaining_blocks: int,
+        battery: float,
+        step: int,
+        max_speed: int = 3,
+    ) -> int:
         if remaining_blocks <= 0 or battery <= 0:
             return 0
 
-        max_speed = min(3, remaining_blocks)
-        for moved_blocks in range(max_speed, 0, -1):
+        capped_speed = min(3, max(1, max_speed), remaining_blocks)
+        for moved_blocks in range(capped_speed, 0, -1):
             battery_after_move = self._move_battery(battery, step, moved_blocks)
             if battery_after_move <= 0:
                 continue
@@ -547,9 +562,20 @@ class RoverPlanner:
             remaining_blocks = outbound_remaining + home_remaining
             moved_blocks = min(
                 outbound_remaining,
-                self.pick_route_speed(remaining_blocks, simulated_battery, simulated_step),
+                self.pick_route_speed(
+                    remaining_blocks,
+                    simulated_battery,
+                    simulated_step,
+                    max_speed=1,
+                ),
             )
             if moved_blocks <= 0:
+                if self._is_day(simulated_step) and simulated_battery < MAX_BATTERY:
+                    simulated_battery = self._standby_battery(simulated_battery, simulated_step)
+                    if simulated_battery <= 0:
+                        return None
+                    simulated_step += 1
+                    continue
                 return None
 
             simulated_battery = self._move_battery(simulated_battery, simulated_step, moved_blocks)
@@ -576,9 +602,20 @@ class RoverPlanner:
 
             moved_blocks = min(
                 home_remaining,
-                self.pick_route_speed(home_remaining, simulated_battery, simulated_step),
+                self.pick_route_speed(
+                    home_remaining,
+                    simulated_battery,
+                    simulated_step,
+                    max_speed=1,
+                ),
             )
             if moved_blocks <= 0:
+                if self._is_day(simulated_step) and simulated_battery < MAX_BATTERY:
+                    simulated_battery = self._standby_battery(simulated_battery, simulated_step)
+                    if simulated_battery <= 0:
+                        return None
+                    simulated_step += 1
+                    continue
                 return None
 
             simulated_battery = self._move_battery(simulated_battery, simulated_step, moved_blocks)
@@ -587,11 +624,6 @@ class RoverPlanner:
 
             home_remaining -= moved_blocks
             simulated_step += 1
-
-        if not self._is_day(simulated_step):
-            night_steps_left = CYCLE - (simulated_step % CYCLE)
-            if simulated_battery <= night_steps_left:
-                return None
 
         return {
             "to_target_steps": to_target_steps,
@@ -670,32 +702,6 @@ class RoverPlanner:
         ranked_candidate_set = set(ranked_candidates)
 
         time_left = max_steps - step
-
-        if adjacent_candidates:
-            adjacent_priority = sorted(
-                adjacent_candidates,
-                key=lambda mineral_index: (
-                    self._index_chebyshev_distance(pos_index, mineral_index),
-                    -frontier_exposure_map[mineral_index],
-                    -density_map[mineral_index],
-                    -cluster_size_map[mineral_index],
-                ),
-            )
-            adjacent_target, adjacent_evaluation, _ = self._best_candidate_from_pool(
-                adjacent_priority,
-                pos,
-                pos_index,
-                battery,
-                step,
-                max_steps,
-                time_left,
-                density_map,
-                cluster_size_map,
-                frontier_exposure_map,
-                cluster_frontier_map,
-            )
-            if adjacent_target is not None and adjacent_evaluation is not None:
-                return self._index_to_position(adjacent_target), adjacent_evaluation
 
         if focus_cluster_id is not None:
             focus_pool = cluster_frontier_members[focus_cluster_id]
