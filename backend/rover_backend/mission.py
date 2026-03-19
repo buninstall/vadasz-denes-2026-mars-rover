@@ -1,5 +1,6 @@
-import csv
 from pathlib import Path
+
+from .maps import load_map_from_csv
 
 GRID_SIZE = 50
 MAX_BATTERY = 100
@@ -17,22 +18,30 @@ class MarsMission:
         self.minerals: dict[tuple[int, int], str] = {}
         self.start_pos: tuple[int, int] | None = None
         self.load_csv(map_file)
-        if self.start_pos is None:
-            raise ValueError("Map must contain exactly one start point 'S'")
 
     def load_csv(self, map_file: str | Path) -> None:
-        with Path(map_file).open("r") as handle:
-            content = handle.read()
-            delimiter = ";" if ";" in content else ","
-            handle.seek(0)
-            reader = csv.reader(handle, delimiter=delimiter)
+        grid = load_map_from_csv(map_file)
+        if grid is None:
+            raise FileNotFoundError(f"Map file '{map_file}' not found")
 
-            for row_index, row in enumerate(reader):
-                for column_index, cell in enumerate(row):
-                    value = cell.strip()
-                    if value == "#":
-                        self.obstacles.add((row_index, column_index))
-                    elif value in {"B", "Y", "G"}:
-                        self.minerals[(row_index, column_index)] = value
-                    elif value == "S":
-                        self.start_pos = (row_index, column_index)
+        if len(grid) != GRID_SIZE or any(len(row) != GRID_SIZE for row in grid):
+            raise ValueError(f"Map must be exactly {GRID_SIZE}x{GRID_SIZE}")
+
+        valid_cells = {".", "#", "B", "Y", "G", "S"}
+        start_count = 0
+
+        for row_index, row in enumerate(grid):
+            for column_index, value in enumerate(row):
+                if value not in valid_cells:
+                    raise ValueError(f"Invalid cell '{value}' at ({row_index}, {column_index})")
+
+                if value == "#":
+                    self.obstacles.add((row_index, column_index))
+                elif value in {"B", "Y", "G"}:
+                    self.minerals[(row_index, column_index)] = value
+                elif value == "S":
+                    start_count += 1
+                    self.start_pos = (row_index, column_index)
+
+        if start_count != 1 or self.start_pos is None:
+            raise ValueError("Map must contain exactly one start point 'S'")

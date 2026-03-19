@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { MapData, ReplayEntry, SimulationResult } from '../types';
+import { MapData, MapLoadSource, SimulationResult } from '../types';
 
 const API_BASE_URL = 'http://localhost:8000'; // Default backend URL
 
@@ -27,10 +27,40 @@ export interface SimulationRecord {
   result: SimulationResult;
 }
 
+const extractStart = (grid: string[][], providedStart?: number[]): [number, number] => {
+  if (
+    Array.isArray(providedStart)
+    && providedStart.length === 2
+    && Number.isInteger(providedStart[0])
+    && Number.isInteger(providedStart[1])
+  ) {
+    return [providedStart[0], providedStart[1]];
+  }
+
+  for (let row = 0; row < grid.length; row++) {
+    for (let col = 0; col < grid[row].length; col++) {
+      if (grid[row][col] === 'S') {
+        return [row, col];
+      }
+    }
+  }
+
+  throw new Error('Map data does not contain a valid start point.');
+};
+
 export const simulationApi = {
-  getMap: async (): Promise<MapData> => {
-    const response = await api.get('/map', { params: { random_map: true } });
-    return { grid: response.data.data || [], filename: response.data.filename || 'mars_map_50x50.csv' };
+  getMap: async (mapSource: MapLoadSource = 'random'): Promise<MapData> => {
+    const response = await api.get('/map', {
+      params: { random_map: mapSource === 'random' },
+    });
+    const grid = response.data.data || [];
+
+    return {
+      grid,
+      filename: response.data.filename || 'mars_map_50x50.csv',
+      sourceFilename: response.data.source_filename || response.data.filename || 'mars_map_50x50.csv',
+      start: extractStart(grid, response.data.start),
+    };
   },
   
   uploadMap: async (file: File): Promise<MapData> => {
@@ -41,7 +71,14 @@ export const simulationApi = {
         'Content-Type': 'multipart/form-data',
       },
     });
-    return { grid: response.data.data || [], filename: response.data.filename };
+    const grid = response.data.data || [];
+
+    return {
+      grid,
+      filename: response.data.filename,
+      sourceFilename: response.data.source_filename || response.data.filename,
+      start: extractStart(grid, response.data.start),
+    };
   },
   
   startSimulation: async (hours: number, mapFile: string): Promise<SimulationResult> => {

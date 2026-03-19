@@ -957,6 +957,17 @@ select {
   line-height: 0.92;
 }
 
+.boot-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.boot-choice-btn {
+  min-height: 42px;
+}
+
 .boot-progress-track {
   overflow: hidden;
   height: 14px;
@@ -981,6 +992,14 @@ select {
   color: var(--text-secondary);
   font-size: 0.7rem;
   letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.boot-error {
+  margin: 12px 0 0;
+  color: var(--signal-danger);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -1217,5 +1236,9 @@ select {
 
   .boot-panel {
     padding: 22px;
+  }
+
+  .boot-actions {
+    grid-template-columns: 1fr;
   }
 }

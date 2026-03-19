@@ -6,8 +6,9 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import SIMULATIONS_DIR, UPLOADS_DIR
-from .maps import load_map_from_csv, pick_map_path, resolve_map_path
+from .config import DEFAULT_MAP_PATH, SIMULATIONS_DIR, UPLOADS_DIR
+from .mission import GRID_SIZE
+from .maps import find_start_point, load_map_from_csv, pick_map_path, prepare_runtime_map, resolve_map_path
 from .schemas import SimulationRequest
 from .simulation import run_simulation
 
@@ -37,23 +38,29 @@ def _load_simulation_record(file_path: Path) -> dict | None:
 @app.get("/map")
 def get_map(random_map: bool = True):
     try:
-        target_file = pick_map_path(random_map=random_map)
+        source_file = pick_map_path(random_map=random_map)
     except FileNotFoundError as exc:
-        # Fallback to default map if no random maps found
-        from .config import DEFAULT_MAP_PATH
-        target_file = DEFAULT_MAP_PATH
-        if not target_file.exists():
-             return {"error": str(exc)}
+        source_file = DEFAULT_MAP_PATH
+        if not source_file.exists():
+            return {"error": str(exc)}
 
-    grid = load_map_from_csv(target_file)
-    if grid is None:
-        return {"error": f"Map file '{target_file.name}' not found"}
+    try:
+        runtime_map_file, runtime_grid = prepare_runtime_map(source_file)
+    except (FileNotFoundError, ValueError) as exc:
+        return {"error": str(exc)}
+
+    try:
+        start_row, start_column = find_start_point(runtime_grid)
+    except ValueError as exc:
+        return {"error": str(exc)}
 
     return {
-        "filename": target_file.name,
-        "width": len(grid[0]) if grid else 0,
-        "height": len(grid),
-        "data": grid,
+        "filename": runtime_map_file.name,
+        "source_filename": source_file.name,
+        "start": [start_row, start_column],
+        "width": len(runtime_grid[0]) if runtime_grid else 0,
+        "height": len(runtime_grid),
+        "data": runtime_grid,
     }
 
 
@@ -74,17 +81,52 @@ async def upload_map(file: UploadFile = File(...)):
     if grid is None:
         raise HTTPException(status_code=400, detail="Invalid map file")
 
+    if len(grid) != GRID_SIZE or any(len(row) != GRID_SIZE for row in grid):
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Map must be exactly {GRID_SIZE}x{GRID_SIZE}",
+        )
+
+    valid_cells = {".", "#", "B", "Y", "G", "S"}
+    invalid_cells = [
+        cell
+        for row in grid
+        for cell in row
+        if cell not in valid_cells
+    ]
+    if invalid_cells:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="Map contains invalid symbols. Allowed: ., #, B, Y, G, S",
+        )
+
     # Basic validation
     starts = sum(row.count("S") for row in grid)
     if starts != 1:
-        target_path.unlink()  # Delete invalid map
+        target_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Map must have exactly one start point 'S'")
 
+    try:
+        runtime_map_file, runtime_grid = prepare_runtime_map(target_path)
+    except (FileNotFoundError, ValueError) as exc:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        start_row, start_column = find_start_point(runtime_grid)
+    except ValueError as exc:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     return {
-        "filename": file.filename,
-        "width": len(grid[0]) if grid else 0,
-        "height": len(grid),
-        "data": grid,
+        "filename": runtime_map_file.name,
+        "source_filename": file.filename,
+        "start": [start_row, start_column],
+        "width": len(runtime_grid[0]) if runtime_grid else 0,
+        "height": len(runtime_grid),
+        "data": runtime_grid,
     }
 
 

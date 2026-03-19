@@ -951,16 +951,7 @@ const Scene: React.FC<SceneProps> = ({
   const isMiningRef = useRef(false);
   const isPlayingRef = useRef(false);
 
-  const mapStartCell: [number, number] = useMemo(() => {
-    for (let row = 0; row < map.grid.length; row++) {
-      for (let col = 0; col < map.grid[row].length; col++) {
-        if (map.grid[row][col] === 'S') {
-          return [row, col];
-        }
-      }
-    }
-    return [0, 0];
-  }, [map]);
+  const mapStartCell: [number, number] = map.start;
 
   const mapStartWorld: [number, number, number] = useMemo(() => {
     return [mapStartCell[1] * CELL_SIZE - OFFSET, 0, mapStartCell[0] * CELL_SIZE - OFFSET];

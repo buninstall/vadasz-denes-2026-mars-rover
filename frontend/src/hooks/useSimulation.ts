@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ComparisonRun, MapData, ReplayEntry, SimulationResult } from '../types';
+import { ActiveMapSource, ComparisonRun, MapData, MapLoadSource, ReplayEntry, SimulationResult } from '../types';
 import { simulationApi, SimulationSummary } from '../services/api';
 
 export const useSimulation = () => {
   const [map, setMap] = useState<MapData | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [replays, setReplays] = useState<ReplayEntry[]>([]);
   const [comparisonRuns, setComparisonRuns] = useState<ComparisonRun[]>([]);
+  const [mapSource, setMapSource] = useState<ActiveMapSource>('random');
 
   const registerComparisonRun = useCallback((result: SimulationResult, label: string, runId?: string) => {
     const id = runId ?? `live-${Date.now()}`;
@@ -27,12 +28,18 @@ export const useSimulation = () => {
     });
   }, []);
 
-  // Load map on mount
-  useEffect(() => {
-    simulationApi.getMap()
-      .then((mapData) => setMap(mapData))
-      .catch(err => console.error('Error fetching map:', err))
-      .finally(() => setLoading(false));
+  const loadMap = useCallback(async (source: MapLoadSource): Promise<MapData> => {
+    setLoading(true);
+    try {
+      const mapData = await simulationApi.getMap(source);
+      setMap(mapData);
+      setMapSource(source);
+      setSimulationResult(null);
+      setIsPlaying(false);
+      return mapData;
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   // Load replays from backend on mount
@@ -68,11 +75,15 @@ export const useSimulation = () => {
   }, [fetchReplays]);
 
   const start = async (hours: number) => {
-    if (!map) return;
     setLoading(true);
     setIsPlaying(false);
     setSimulationResult(null);
+
     try {
+      if (!map) {
+        throw new Error('No map available to run simulation');
+      }
+
       const data = await simulationApi.startSimulation(hours, map.filename);
       setSimulationResult(data);
       setIsPlaying(true);
@@ -92,6 +103,7 @@ export const useSimulation = () => {
     try {
       const newMap = await simulationApi.uploadMap(file);
       setMap(newMap);
+      setMapSource('custom');
       setSimulationResult(null);
       setIsPlaying(false);
     } catch (error) {
@@ -108,7 +120,35 @@ export const useSimulation = () => {
       const record = await simulationApi.getSimulation(replayId);
       setSimulationResult(record.result);
       if (record.mapGrid && record.mapGrid.length > 0) {
-        setMap({ grid: record.mapGrid as any, filename: record.mapFile || 'unknown' });
+        let replayStart: [number, number] | null = null;
+        if (Array.isArray(record.result.start) && record.result.start.length === 2) {
+          replayStart = [record.result.start[0], record.result.start[1]];
+        }
+
+        if (!Array.isArray(replayStart) || replayStart.length !== 2) {
+          let foundStart: [number, number] | null = null;
+          for (let row = 0; row < record.mapGrid.length; row++) {
+            for (let col = 0; col < record.mapGrid[row].length; col++) {
+              if (record.mapGrid[row][col] === 'S') {
+                foundStart = [row, col];
+                break;
+              }
+            }
+            if (foundStart) break;
+          }
+          replayStart = foundStart;
+        }
+
+        if (!replayStart) {
+          throw new Error('Replay map does not contain a valid start point');
+        }
+
+        setMap({
+          grid: record.mapGrid as any,
+          filename: record.mapFile || 'unknown',
+          sourceFilename: record.mapFile || 'unknown',
+          start: replayStart,
+        });
       }
       setIsPlaying(true);
       registerComparisonRun(
@@ -152,6 +192,8 @@ export const useSimulation = () => {
     loading,
     replays,
     comparisonRuns,
+    mapSource,
+    loadMap,
     start,
     loadReplay,
     deleteReplay,

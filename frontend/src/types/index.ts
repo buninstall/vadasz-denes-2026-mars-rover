@@ -1,8 +1,12 @@
 export type BlockType = '.' | '#' | 'B' | 'Y' | 'G' | 'S';
+export type MapLoadSource = 'random' | 'static';
+export type ActiveMapSource = MapLoadSource | 'custom';
 
 export interface MapData {
   grid: BlockType[][];
   filename: string;
+  sourceFilename?: string;
+  start: [number, number];
 }
 
 export interface RoverState {

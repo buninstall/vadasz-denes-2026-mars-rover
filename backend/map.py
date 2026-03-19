@@ -155,6 +155,56 @@ def pick_cluster_origins(noise_map, target_count, threshold, min_distance, seed)
     return selected
 
 
+def place_rectangular_cluster(
+    mars_map,
+    grid_x,
+    grid_y,
+    symbol,
+    width,
+    height,
+    block_size,
+    grid_width,
+    grid_height,
+    seed,
+):
+    """Place a block-grid aligned rectangular cluster."""
+    rng = random.Random(seed + grid_x * 4099 + grid_y * 7873)
+
+    rect_w_blocks = rng.randint(1, 3)
+    rect_h_blocks = rng.randint(1, 3)
+
+    anchor_offset_x = rng.randint(0, rect_w_blocks - 1)
+    anchor_offset_y = rng.randint(0, rect_h_blocks - 1)
+
+    start_block_x = max(
+        0,
+        min(grid_x - anchor_offset_x, grid_width - rect_w_blocks),
+    )
+    start_block_y = max(
+        0,
+        min(grid_y - anchor_offset_y, grid_height - rect_h_blocks),
+    )
+
+    cells_to_fill = []
+    for by in range(start_block_y, start_block_y + rect_h_blocks):
+        for bx in range(start_block_x, start_block_x + rect_w_blocks):
+            x0 = bx * block_size
+            y0 = by * block_size
+            x1 = min(width, x0 + block_size)
+            y1 = min(height, y0 + block_size)
+
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    if mars_map[y][x] != ".":
+                        return False
+                    cells_to_fill.append((x, y))
+
+    for x, y in cells_to_fill:
+        mars_map[y][x] = symbol
+
+    return True
+
+
 def generate_amorphous_cluster(seed, size_range=(8, 16)):
     """Generate an organic, amorphous cluster shape."""
     random.seed(seed)
@@ -388,33 +438,37 @@ def place_clean_cluster(mars_map, x, y, symbol, width, height, seed):
 
 
 def generate_terrain_with_clusters(width, height, seed):
-    """Generate terrain by placing noise-driven amorphous clusters."""
+    """Generate terrain by placing noise-driven rectangular clusters."""
     mars_map = [["." for _ in range(width)] for _ in range(height)]
     random.seed(seed)
 
-    # Build layered noise fields for natural, non-grid origin selection.
+    block_size = 2
+    grid_width = math.ceil(width / block_size)
+    grid_height = math.ceil(height / block_size)
+
+    # Generate low-resolution noise fields, then place clusters aligned to block grid.
     blue_noise = add_sine_waves(
-        generate_noise_map(width, height, 14, 3, seed + 1),
-        width,
-        height,
+        generate_noise_map(grid_width, grid_height, 4.5, 3, seed + 1),
+        grid_width,
+        grid_height,
         seed + 101,
     )
     yellow_noise = add_sine_waves(
-        generate_noise_map(width, height, 17, 3, seed + 2),
-        width,
-        height,
+        generate_noise_map(grid_width, grid_height, 5.0, 3, seed + 2),
+        grid_width,
+        grid_height,
         seed + 102,
     )
     green_noise = add_sine_waves(
-        generate_noise_map(width, height, 20, 3, seed + 3),
-        width,
-        height,
+        generate_noise_map(grid_width, grid_height, 5.6, 3, seed + 3),
+        grid_width,
+        grid_height,
         seed + 103,
     )
     obstacle_noise = add_sine_waves(
-        generate_noise_map(width, height, 11, 3, seed + 4),
-        width,
-        height,
+        generate_noise_map(grid_width, grid_height, 4.2, 3, seed + 4),
+        grid_width,
+        grid_height,
         seed + 104,
     )
 
@@ -422,51 +476,87 @@ def generate_terrain_with_clusters(width, height, seed):
 
     blue_origins = pick_cluster_origins(
         blue_noise,
-        target_count=max(8, int(area / 125)),
-        threshold=0.63,
-        min_distance=4,
+        target_count=max(12, int(area / 180)),
+        threshold=0.56,
+        min_distance=2,
         seed=seed + 1001,
     )
     yellow_origins = pick_cluster_origins(
         yellow_noise,
-        target_count=max(7, int(area / 145)),
-        threshold=0.64,
-        min_distance=4,
+        target_count=max(11, int(area / 200)),
+        threshold=0.58,
+        min_distance=2,
         seed=seed + 1002,
     )
     green_origins = pick_cluster_origins(
         green_noise,
-        target_count=max(6, int(area / 155)),
-        threshold=0.65,
-        min_distance=4,
+        target_count=max(9, int(area / 250)),
+        threshold=0.60,
+        min_distance=2,
         seed=seed + 1003,
     )
     obstacle_origins = pick_cluster_origins(
         obstacle_noise,
-        target_count=max(10, int(area / 115)),
-        threshold=0.66,
-        min_distance=3,
+        target_count=max(12, int(area / 190)),
+        threshold=0.57,
+        min_distance=2,
         seed=seed + 1004,
     )
 
+    for x, y in obstacle_origins:
+        place_rectangular_cluster(
+            mars_map,
+            x,
+            y,
+            "#",
+            width,
+            height,
+            block_size,
+            grid_width,
+            grid_height,
+            seed + x + y + 5000,
+        )
+
     for x, y in blue_origins:
-        place_clean_cluster(
-            mars_map, x, y, "B", width, height, seed + x + y + 2000
+        place_rectangular_cluster(
+            mars_map,
+            x,
+            y,
+            "B",
+            width,
+            height,
+            block_size,
+            grid_width,
+            grid_height,
+            seed + x + y + 2000,
         )
 
     for x, y in yellow_origins:
-        place_clean_cluster(
-            mars_map, x, y, "Y", width, height, seed + x + y + 3000
+        place_rectangular_cluster(
+            mars_map,
+            x,
+            y,
+            "Y",
+            width,
+            height,
+            block_size,
+            grid_width,
+            grid_height,
+            seed + x + y + 3000,
         )
 
     for x, y in green_origins:
-        place_clean_cluster(
-            mars_map, x, y, "G", width, height, seed + x + y + 4000
-        )
-
-    for x, y in obstacle_origins:
-        place_clean_cluster(
-            mars_map, x, y, "#", width, height, seed + x + y + 5000
+        place_rectangular_cluster(
+            mars_map,
+            x,
+            y,
+            "G",
+            width,
+            height,
+            block_size,
+            grid_width,
+            grid_height,
+            seed + x + y + 4000,
         )
 
     return mars_map
@@ -508,11 +598,11 @@ def place_rover(mars_map, width, height, seed):
 
 
 def generate_mars_map(width=50, height=50, seed=None):
-    """Generate a Mars surface map with amorphous clusters."""
+    """Generate a Mars surface map with rectangular clusters."""
     if seed is None:
         seed = random.randint(0, 1000000)
 
-    # Generate terrain with amorphous clusters
+    # Generate terrain with rectangular clusters
     mars_map = generate_terrain_with_clusters(width, height, seed)
 
     # Place rover
@@ -555,7 +645,7 @@ if __name__ == "__main__":
     tasks = [(i, output_dir) for i in range(num_maps)]
 
     # Generate maps in parallel
-    print(f"Generating {num_maps} Mars maps with amorphous clusters...")
+    print(f"Generating {num_maps} Mars maps with rectangular clusters...")
 
     completed = 0
     failed = 0

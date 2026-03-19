@@ -56,15 +56,7 @@ const Minimap: React.FC<MinimapProps> = ({
 
   const plannedPath = useMemo(() => simulationResult?.path ?? null, [simulationResult]);
 
-  const startCell = useMemo<[number, number]>(() => {
-    if (simulationResult) return simulationResult.start;
-    for (let row = 0; row < map.grid.length; row++) {
-      for (let col = 0; col < map.grid[row].length; col++) {
-        if (map.grid[row][col] === 'S') return [row, col];
-      }
-    }
-    return [0, 0];
-  }, [simulationResult, map]);
+  const startCell = useMemo<[number, number]>(() => simulationResult?.start ?? map.start, [simulationResult, map.start]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -201,16 +193,11 @@ const Minimap: React.FC<MinimapProps> = ({
       ctx.fillStyle = '#ecfbff';
       ctx.fill();
     } else {
-      for (let y = 0; y < map.grid.length; y++) {
-        for (let x = 0; x < map.grid[y].length; x++) {
-          if (map.grid[y][x] === 'S') {
-            ctx.beginPath();
-            ctx.arc(x * CELL + CELL / 2, y * CELL + CELL / 2, CELL - 0.4, 0, Math.PI * 2);
-            ctx.fillStyle = '#ecfbff';
-            ctx.fill();
-          }
-        }
-      }
+      const [row, col] = startCell;
+      ctx.beginPath();
+      ctx.arc(col * CELL + CELL / 2, row * CELL + CELL / 2, CELL - 0.4, 0, Math.PI * 2);
+      ctx.fillStyle = '#ecfbff';
+      ctx.fill();
     }
   }, [
     staticCanvas,
@@ -238,9 +225,7 @@ const Minimap: React.FC<MinimapProps> = ({
     : 0;
   const currentPosition = plannedPath?.length
     ? plannedPath[Math.min(currentStep, plannedPath.length - 1)]
-    : map.grid.flatMap((row, rowIndex) =>
-        row.map((cell, colIndex) => (cell === 'S' ? ([rowIndex, colIndex] as [number, number]) : null)),
-      ).find(Boolean) ?? [0, 0];
+    : startCell;
 
   return (
     <div className="minimap-shell">

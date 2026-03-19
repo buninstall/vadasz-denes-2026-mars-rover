@@ -7,7 +7,7 @@ import LogViewer from './components/LogViewer';
 import Minimap from './components/Minimap';
 import { useSimulation } from './hooks/useSimulation';
 import PostMissionReport from './components/PostMissionReport';
-import { SimLogEntry } from './types';
+import { MapLoadSource, SimLogEntry } from './types';
 
 function LoadingScreen({ onLoaded }: { onLoaded: () => void }) {
   const { progress, active } = useProgress();
@@ -56,6 +56,8 @@ export default function App() {
     isPlaying,
     loading,
     replays,
+    mapSource,
+    loadMap,
     start,
     loadReplay,
     deleteReplay,
@@ -69,6 +71,8 @@ export default function App() {
   const [currentStep, setCurrentStep] = useState(0);
   const [stepOverride, setStepOverride] = useState<number | null>(null);
   const [reportDismissed, setReportDismissed] = useState(false);
+  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
+  const startupFileInputRef = useRef<HTMLInputElement>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastMiningSoundStepRef = useRef(-1);
@@ -158,17 +162,71 @@ export default function App() {
     };
   }, []);
 
+  const handleInitialMapSelection = useCallback(async (source: MapLoadSource) => {
+    setMapLoadError(null);
+    try {
+      await loadMap(source);
+    } catch (error) {
+      console.error('Failed to load map from backend', error);
+      setMapLoadError('Failed to load map from backend.');
+    }
+  }, [loadMap]);
+
   if (!map) {
+    const statusText = loading ? 'FETCHING TERRAIN PACKAGE' : 'SELECT STARTUP MAP SOURCE';
+    const stateText = loading ? 'SYNCING BACKEND' : 'AWAITING COMMAND';
+
     return (
       <div className="boot-screen boot-screen--standalone">
         <div className="boot-grid">
-          <div className="boot-panel">            <h1 className="boot-title">ROVER CONTROL DECK</h1>
-            <div className="boot-progress-track">
-              <div className="boot-progress-fill" style={{ width: '52%' }} />
+          <div className="boot-panel">
+            <p className="boot-kicker">Mission setup</p>
+            <h1 className="boot-title">ROVER CONTROL DECK</h1>
+
+            <div className="boot-actions">
+              <button
+                className="command-button command-button--primary boot-choice-btn"
+                onClick={() => handleInitialMapSelection('random')}
+                disabled={loading}
+              >
+                Random backend map
+              </button>
+
+              <button
+                className="command-button command-button--secondary boot-choice-btn"
+                onClick={() => handleInitialMapSelection('static')}
+                disabled={loading}
+              >
+                Static backend map
+              </button>
+
+              <input
+                ref={startupFileInputRef}
+                type="file"
+                accept=".csv"
+                className="sr-only"
+                onChange={(event) => {
+                  if (!event.target.files || event.target.files.length === 0) return;
+                  setMapLoadError(null);
+                  uploadCustomMap(event.target.files[0]);
+                  event.target.value = '';
+                }}
+              />
+
+              <button
+                className="command-button command-button--ghost boot-choice-btn"
+                onClick={() => startupFileInputRef.current?.click()}
+                disabled={loading}
+              >
+                Custom map upload
+              </button>
             </div>
+
+            {mapLoadError && <p className="boot-error">{mapLoadError}</p>}
+
             <div className="boot-footer">
-              <span>FETCHING TERRAIN PACKAGE</span>
-              <span>STANDBY</span>
+              <span>{statusText}</span>
+              <span>{stateText}</span>
             </div>
           </div>
         </div>
@@ -178,7 +236,12 @@ export default function App() {
 
   const mapWidth = map.grid[0]?.length ?? 0;
   const mapHeight = map.grid.length;
-  const mapSize = `${mapWidth} x ${mapHeight}`;
+  const mapSourceLabel = mapSource === 'random'
+    ? 'Random backend'
+    : mapSource === 'static'
+      ? 'Static backend'
+      : 'Custom upload';
+  const mapSize = `${mapWidth} x ${mapHeight} • ${mapSourceLabel}`;
   return (
     <div className="app-shell">
       <LoadingScreen onLoaded={() => setIsLoaded(true)} />
@@ -227,7 +290,7 @@ export default function App() {
                 replays={replays}
                 isLoading={loading}
                 onUploadMap={uploadCustomMap}
-                mapFilename={map.filename}
+                mapFilename={map.sourceFilename ?? map.filename}
                 mapSize={mapSize}
               />
             </div>
