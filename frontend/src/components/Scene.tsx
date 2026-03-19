@@ -36,8 +36,7 @@ const OBSTACLE_SCALE = 4.5;
 const MINERAL_GROUND_CLEARANCE = 0.02;
 const GOLD_GROUND_CLEARANCE = 0.04;
 const MINERAL_SCALE = 0.15;
-const GOLD_SCALE = 5;
-const MINERAL_RANDOM_OFFSET = 0.6;
+const GOLD_SCALE = 4;
 const RENDER_DISTANCE = 1400;
 const TERRAIN_SIZE = 2200;
 const TERRAIN_SEGMENTS = 250;
@@ -868,14 +867,51 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     const horizontalDistance = Math.hypot(toTargetX, toTargetZ);
 
     const speedMultiplier = Math.max(0.1, speedRef.current);
+
+    // ── TURN-THEN-DRIVE LOGIC ──
+    // 1. Compute the angle the rover NEEDS to face to reach the target
+    // 2. Rotate toward it; only drive forward once mostly aligned
+
+    // Desired heading toward the target
+    let desiredYaw = yawRef.current; // fallback: keep current heading
+    if (horizontalDistance > 0.01) {
+      desiredYaw = Math.atan2(toTargetX, toTargetZ);
+    }
+
+    // Compute angular difference (signed, -PI..PI)
+    const yawDiff = ((desiredYaw - yawRef.current + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const absYawDiff = Math.abs(yawDiff);
+
+    // Rotation speed scales with simulation speed — faster sim = faster turns
+    // Base turn speed ~6 rad/s, scaled by speedMultiplier
+    const turnSpeed = 6.0 * Math.max(1, speedMultiplier * 0.7);
+
+    // Apply rotation — step toward desired yaw
+    const maxYawStep = turnSpeed * delta;
+    if (absYawDiff > 0.001) {
+      const yawStep = Math.sign(yawDiff) * Math.min(absYawDiff, maxYawStep);
+      yawRef.current += yawStep;
+    }
+    roverRef.current.rotation.y = yawRef.current;
+
+    // Update smooth heading to match actual yaw (for terrain pitch/roll calc)
+    smoothHeadingRef.current.set(Math.sin(yawRef.current), Math.cos(yawRef.current)).normalize();
+    headingRef.current.copy(smoothHeadingRef.current);
+
+    // ── DRIVE: only move forward when roughly facing the target ──
+    // Threshold: allow movement when within ~20° of target heading
+    // At very small distances, always allow (to not get stuck on the last pixel)
+    const alignThreshold = horizontalDistance < 0.3 ? Math.PI : 0.35; // ~20°
+
+    const isAligned = absYawDiff < alignThreshold;
     const targetMoveSpeed = (isMiningRef.current ? 2.2 : 5.8) * speedMultiplier;
 
-    // Smooth acceleration / deceleration
-    const accelRate = horizontalDistance > 0.05 ? 4.0 : 8.0; // accelerate slower, decelerate faster
-    const desiredSpeed = horizontalDistance > 0.0001 ? targetMoveSpeed : 0;
+    // Smooth acceleration, faster deceleration
+    const desiredDriveSpeed = (isAligned && horizontalDistance > 0.0001) ? targetMoveSpeed : 0;
+    const accelRate = desiredDriveSpeed > currentMoveSpeedRef.current ? 6.0 : 12.0;
     currentMoveSpeedRef.current = THREE.MathUtils.lerp(
       currentMoveSpeedRef.current,
-      desiredSpeed,
+      desiredDriveSpeed,
       Math.min(1, accelRate * delta),
     );
     const moveSpeed = currentMoveSpeedRef.current;
@@ -889,43 +925,22 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
       velocity.x = moveX / Math.max(delta, 1e-5);
       velocity.z = moveZ / Math.max(delta, 1e-5);
     } else {
-      position.x = target.x;
-      position.z = target.z;
-      velocity.x = THREE.MathUtils.lerp(velocity.x, 0, Math.min(1, 6 * delta));
-      velocity.z = THREE.MathUtils.lerp(velocity.z, 0, Math.min(1, 6 * delta));
+      if (horizontalDistance <= 0.0001) {
+        position.x = target.x;
+        position.z = target.z;
+      }
+      velocity.x = THREE.MathUtils.lerp(velocity.x, 0, Math.min(1, 8 * delta));
+      velocity.z = THREE.MathUtils.lerp(velocity.z, 0, Math.min(1, 8 * delta));
     }
 
-    // Smooth Y-axis terrain following (reduced from 10 to 4)
+    // Smooth Y-axis terrain following
     const desiredY = estimateTerrainHeight(position.x, position.z) + groundOffset + ROVER_GROUND_CLEARANCE;
-    position.y = THREE.MathUtils.lerp(position.y, desiredY, Math.min(1, 4 * delta));
+    position.y = THREE.MathUtils.lerp(position.y, desiredY, Math.min(1, 6 * delta));
 
     // Update shared rover position ref for sync
     roverPosRef.current.copy(position);
 
-    const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
-
-    // Update raw heading from velocity
-    if (horizontalSpeed > 0.05) {
-      headingRef.current.set(velocity.x, velocity.z).normalize();
-    }
-
-    // Smooth the heading itself to avoid jittery direction changes
-    const smoothRate = Math.min(1, 5 * delta);
-    smoothHeadingRef.current.set(
-      THREE.MathUtils.lerp(smoothHeadingRef.current.x, headingRef.current.x, smoothRate),
-      THREE.MathUtils.lerp(smoothHeadingRef.current.y, headingRef.current.y, smoothRate),
-    );
-    if (smoothHeadingRef.current.lengthSq() > 0.0001) {
-      smoothHeadingRef.current.normalize();
-    }
-
-    // Smooth yaw rotation (reduced from 10 to 4)
-    const targetYaw = Math.atan2(smoothHeadingRef.current.x, smoothHeadingRef.current.y);
-    const yawDiff = ((targetYaw - yawRef.current + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    yawRef.current += yawDiff * Math.min(1, 4 * delta);
-    roverRef.current.rotation.y = yawRef.current;
-
-    // Terrain-following pitch and roll
+    // ── Terrain-following pitch and roll ──
     const dirX = smoothHeadingRef.current.x;
     const dirZ = smoothHeadingRef.current.y;
     const rightX = dirZ;
@@ -940,22 +955,23 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     const targetPitch = THREE.MathUtils.clamp(Math.atan2(hBack - hFront, sample * 2), -0.25, 0.25);
     const targetRoll = THREE.MathUtils.clamp(Math.atan2(hLeft - hRight, sample * 2), -0.25, 0.25);
 
-    // Smooth pitch/roll (reduced from 8 to 3)
+    // Smooth pitch/roll
     roverRef.current.rotation.x = THREE.MathUtils.lerp(
       roverRef.current.rotation.x,
       targetPitch,
-      Math.min(1, 3 * delta),
+      Math.min(1, 5 * delta),
     );
 
-    // Subtle body sway while moving (simulates terrain micro-bumps)
-    const swayAmount = THREE.MathUtils.clamp(horizontalSpeed / 6, 0, 1) * 0.008;
+    // Subtle body sway while driving
+    const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
+    const swayAmount = THREE.MathUtils.clamp(horizontalSpeed / 6, 0, 1) * 0.006;
     swayPhaseRef.current += delta * 3.5;
     const swayRoll = Math.sin(swayPhaseRef.current) * swayAmount;
 
     roverRef.current.rotation.z = THREE.MathUtils.lerp(
       roverRef.current.rotation.z,
       targetRoll + swayRoll,
-      Math.min(1, 3 * delta),
+      Math.min(1, 5 * delta),
     );
 
     if (isMiningRef.current) {
@@ -1191,12 +1207,6 @@ const MarsSurface = React.memo(() => {
         tmpColor.lerpColors(valleyColor, marsDustColor, t * 2);
       } else {
         tmpColor.lerpColors(marsDustColor, peakColor, (t - 0.5) * 2);
-      }
-
-      // If it's the rim zone, blend slightly towards the rim color
-      if (dE > 0 && dE < RIM_WIDTH + 10) {
-        const rimInfluence = Math.sin(Math.min(dE / RIM_WIDTH, 1) * Math.PI);
-        tmpColor.lerp(rimColor, rimInfluence * 0.4);
       }
 
       // Subtle surface noise variation (applied everywhere)
@@ -1653,7 +1663,7 @@ const Scene: React.FC<SceneProps> = ({
   return (
     <div className="w-full h-screen absolute inset-0 z-0">
       <Canvas
-        shadows
+        shadows={{ type: THREE.PCFShadowMap }}
         camera={{ position: startPos, fov: 60, far: RENDER_DISTANCE * 4, near: 0.1 }}
         gl={{ logarithmicDepthBuffer: true }}
         frameloop="always"

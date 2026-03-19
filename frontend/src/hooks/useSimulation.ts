@@ -181,6 +181,18 @@ export const useSimulation = () => {
     }
   }, []);
 
+  const restoreSimulation = useCallback((savedMap: MapData, savedResult: SimulationResult) => {
+    setMap(savedMap);
+    setSimulationResult(savedResult);
+    setIsPlaying(false);
+  }, []);
+
+  const resetSimulation = useCallback(() => {
+    setMap(null);
+    setSimulationResult(null);
+    setIsPlaying(false);
+  }, []);
+
   const onSimulationComplete = () => {
     setIsPlaying(false);
   };
@@ -200,5 +212,7 @@ export const useSimulation = () => {
     clearReplays,
     onSimulationComplete,
     uploadCustomMap,
+    resetSimulation,
+    restoreSimulation,
   };
 };

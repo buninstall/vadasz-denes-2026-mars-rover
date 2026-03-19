@@ -65,6 +65,8 @@ export default function App() {
     onSimulationComplete,
     uploadCustomMap,
     comparisonRuns,
+    restoreSimulation,
+    resetSimulation,
   } = useSimulation();
 
   const [isLoaded, setIsLoaded] = useState(false);
@@ -74,6 +76,37 @@ export default function App() {
   const [mapLoadError, setMapLoadError] = useState<string | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>('follow');
   const startupFileInputRef = useRef<HTMLInputElement>(null);
+
+  const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [savedSession, setSavedSession] = useState<any>(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('mars_rover_saved_session');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.map && parsed.simulationResult && parsed.currentStep !== undefined) {
+          setSavedSession(parsed);
+          setShowResumePrompt(true);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse saved session', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (simulationResult && map && !showResumePrompt) {
+      localStorage.setItem('mars_rover_saved_session', JSON.stringify({
+        map,
+        simulationResult,
+        currentStep
+      }));
+    } else if (!simulationResult) {
+      localStorage.removeItem('mars_rover_saved_session');
+    }
+  }, [simulationResult, map, currentStep, showResumePrompt]);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastMiningSoundStepRef = useRef(-1);
@@ -172,6 +205,43 @@ export default function App() {
       setMapLoadError('Failed to load map from backend.');
     }
   }, [loadMap]);
+
+  if (showResumePrompt && savedSession) {
+    return (
+      <div className="boot-screen boot-screen--standalone">
+        <div className="boot-grid">
+          <div className="boot-panel">
+            <h1 className="boot-title">RESUME SIMULATION</h1>
+            <p style={{ color: '#9ca3af', marginBottom: 24, fontSize: '0.95rem' }}>An unfinished simulation was found. Do you want to resume it from where you left off?</p>
+            <div className="boot-actions">
+              <button
+                className="command-button command-button--primary boot-choice-btn"
+                onClick={() => {
+                  restoreSimulation(savedSession.map, savedSession.simulationResult);
+                  setCurrentStep(savedSession.currentStep);
+                  setStepOverride(savedSession.currentStep);
+                  setShowResumePrompt(false);
+                  setSavedSession(null);
+                }}
+              >
+                Yes, Resume
+              </button>
+              <button
+                className="command-button command-button--secondary boot-choice-btn"
+                onClick={() => {
+                  localStorage.removeItem('mars_rover_saved_session');
+                  setShowResumePrompt(false);
+                  setSavedSession(null);
+                }}
+              >
+                No, Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!map) {
     const statusText = loading ? 'FETCHING TERRAIN PACKAGE' : 'SELECT STARTUP MAP SOURCE';
@@ -276,6 +346,8 @@ export default function App() {
                 isPlaying={isPlaying}
                 cameraMode={cameraMode}
                 onCameraModeChange={setCameraMode}
+                onExit={() => setShowExitConfirm(true)}
+                onJumpToStep={handleJumpToStep}
               />
             </div>
 
@@ -318,6 +390,35 @@ export default function App() {
             currentStep={currentStep}
             onClose={() => setReportDismissed(true)}
           />
+        </div>
+      )}
+
+      {showExitConfirm && (
+        <div className="boot-screen boot-screen--standalone" style={{ zIndex: 9999 }}>
+          <div className="boot-grid">
+            <div className="boot-panel">
+              <h1 className="boot-title" style={{ color: '#ef4444' }}>ABORT MISSION?</h1>
+              <p style={{ color: '#9ca3af', marginBottom: 24, fontSize: '0.95rem' }}>Are you sure you want to end the current simulation and return to the main menu? Unsaved progress will be tracked by auto-save.</p>
+              <div className="boot-actions">
+                <button
+                  className="command-button command-button--primary boot-choice-btn"
+                  style={{ background: '#dc2626', borderColor: '#ef4444' }}
+                  onClick={() => {
+                    resetSimulation();
+                    setShowExitConfirm(false);
+                  }}
+                >
+                  Yes, Abort
+                </button>
+                <button
+                  className="command-button command-button--secondary boot-choice-btn"
+                  onClick={() => setShowExitConfirm(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
