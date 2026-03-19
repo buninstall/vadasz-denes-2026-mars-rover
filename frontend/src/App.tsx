@@ -40,7 +40,7 @@ function LoadingScreen({ onLoaded }: { onLoaded: () => void }) {
             <div className="boot-progress-fill" style={{ width: `${progress}%` }} />
           </div>
           <div className="boot-footer">
-            <span>{progress === 100 ? 'CONTROL SURFACE ONLINE' : `INITIALIZING ${Math.round(progress)}%`}</span>
+            <span>{progress === 100 ? '' : `INITIALIZING ${Math.round(progress)}%`}</span>
             <span>{active ? 'SYNCING ASSETS' : 'STANDBY'}</span>
           </div>
         </div>
@@ -88,12 +88,14 @@ export default function App() {
   const [pendingJumpStep, setPendingJumpStep] = useState<number | null>(null);
   const [showRandomOptions, setShowRandomOptions] = useState(false);
 
-  // Mark loaded if we are already in simulation
   useEffect(() => {
-    if (map && simulationResult) {
-      setIsLoaded(true);
+    if (!map) {
+      setShowRandomOptions(false);
+      setShowSavedSimulations(false);
     }
-  }, [map, simulationResult]);
+  }, [map]);
+
+  // Mark loaded if we are already in simulation
 
   useEffect(() => {
     try {
@@ -233,9 +235,10 @@ export default function App() {
     setMapLoadError(null);
     try {
       await loadMap(source);
-    } catch (error) {
-      console.error('Failed to load map from backend', error);
-      setMapLoadError('Failed to load map from backend.');
+      setShowRandomOptions(false);
+    } catch (error: any) {
+      console.error('Failed to load initial map:', error);
+      setMapLoadError(error.message || 'Failed to connect to backend');
     }
   }, [loadMap]);
 
@@ -327,7 +330,7 @@ export default function App() {
 
   if (!map) {
     const statusText = loading ? 'FETCHING TERRAIN PACKAGE' : 'SELECT STARTUP MAP SOURCE';
-    const stateText = loading ? 'SYNCING BACKEND' : 'AWAITING COMMAND';
+    const stateText = loading ? 'SYNCING BACKEND' : '';
 
     if (showRandomOptions) {
       return (
@@ -446,10 +449,16 @@ export default function App() {
                 Custom map upload
               </button>
             </div>
-
-            <div className="boot-actions" style={{ marginTop: 24, paddingTop: 24, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+            <div className="boot-actions" style={{ 
+              marginTop: 24, 
+              paddingTop: 24, 
+              borderTop: '1px solid rgba(255,255,255,0.1)',
+              display: 'flex',
+              justifyContent: 'center'
+            }}>
               <button
                 className="command-button command-button--ghost boot-choice-btn"
+                style={{ width: '100%', flex: 1 }}
                 onClick={() => setShowSavedSimulations(true)}
                 disabled={loading}
               >
@@ -462,6 +471,30 @@ export default function App() {
             <div className="boot-footer">
               <span>{statusText}</span>
               <span>{stateText}</span>
+            </div>
+
+            <div 
+              style={{ 
+                position: 'fixed', 
+                bottom: '12px', 
+                right: '16px', 
+                textAlign: 'right',
+                opacity: 0.3,
+                pointerEvents: 'none',
+                fontFamily: '"IBM Plex Mono", monospace',
+                fontSize: '0.62rem',
+                lineHeight: '1.4',
+                color: 'var(--text-secondary)',
+                letterSpacing: '0.06em',
+                zIndex: 100,
+                textTransform: 'uppercase'
+              }}
+            >
+              VADÁSZ DÉNES INFORMATIKA VERSENY 2026<br />
+              PROGRAMOZÓI KATEGÓRIA<br />
+              <span style={{ fontSize: '0.58rem', color: 'var(--text-muted)' }}>
+                készítette: bun install
+              </span>
             </div>
           </div>
         </div>
