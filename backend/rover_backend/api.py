@@ -138,7 +138,11 @@ def start_simulation(request: SimulationRequest):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     try:
-        result = run_simulation(map_path, request.time_limit_hours)
+        result = run_simulation(
+            map_path,
+            request.time_limit_hours,
+            collect_all=request.collect_all,
+        )
     except Exception as exc:  # pragma: no cover - surfaced as HTTP errors
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

@@ -56,7 +56,6 @@ class RoverPlanner:
         self._parent = [-1] * CELL_COUNT
         self._remaining_minerals = set(self.m.minerals.keys())
         self._remaining_mineral_indices: set[int] = set()
-        self._mineral_blocked = [False] * CELL_COUNT
         self.reset_runtime_state()
 
     def _position_to_index(self, position: Position) -> int:
@@ -118,9 +117,6 @@ class RoverPlanner:
         self._remaining_mineral_indices = {
             self._position_to_index(mineral) for mineral in self._remaining_minerals
         }
-        self._mineral_blocked = [False] * CELL_COUNT
-        for mineral_index in self._remaining_mineral_indices:
-            self._mineral_blocked[mineral_index] = True
 
     def _invalidate_route_cache(self) -> None:
         self._pair_path_cache = {}
@@ -137,7 +133,6 @@ class RoverPlanner:
             self._remaining_minerals.remove(mineral)
             mineral_index = self._position_to_index(mineral)
             self._remaining_mineral_indices.discard(mineral_index)
-            self._mineral_blocked[mineral_index] = False
             self._invalidate_route_cache()
 
     def _is_day(self, step: int) -> bool:
@@ -219,10 +214,6 @@ class RoverPlanner:
     ) -> list[Position]:
         start_index = self._position_to_index(start)
         target_index = self._position_to_index(target)
-        passable = set(passable_cells)
-
-        if self._mineral_blocked[target_index] and target_index not in passable:
-            return []
 
         self._search_generation += 1
         generation = self._search_generation
@@ -247,9 +238,6 @@ class RoverPlanner:
                 break
 
             for next_index in self._path_neighbors_by_index[current_index]:
-                if self._mineral_blocked[next_index] and next_index not in passable:
-                    continue
-
                 new_cost = current_cost + 1
                 if (
                     self._seen_generation[next_index] != generation
@@ -566,7 +554,7 @@ class RoverPlanner:
                     remaining_blocks,
                     simulated_battery,
                     simulated_step,
-                    max_speed=1,
+                    max_speed=3,
                 ),
             )
             if moved_blocks <= 0:
@@ -606,7 +594,7 @@ class RoverPlanner:
                     home_remaining,
                     simulated_battery,
                     simulated_step,
-                    max_speed=1,
+                    max_speed=3,
                 ),
             )
             if moved_blocks <= 0:

@@ -29,7 +29,11 @@ def _build_log_entry(
     }
 
 
-def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
+def run_simulation(
+    map_file: str | Path,
+    time_limit_hours: int = 24,
+    collect_all: bool = False,
+) -> dict:
     mission = MarsMission(map_file)
     planner = RoverPlanner(mission)
 
@@ -53,6 +57,19 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
     time_budget_steps = max(1, effective_hours * 2)
     max_steps = min(MAX_SIMULATION_STEPS, time_budget_steps)
 
+    def should_wait_for_day() -> bool:
+        if battery <= 0 or step >= max_steps:
+            return False
+
+        if planner._is_day(step):
+            return battery < MAX_BATTERY
+
+        steps_until_day = CYCLE - (step % CYCLE)
+        if step + steps_until_day >= max_steps:
+            return False
+
+        return battery > steps_until_day
+
     def standby(reason: str) -> bool:
         nonlocal battery, step, termination_reason
 
@@ -63,7 +80,7 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
         step += 1
         path.append(list(pos))
         battery_log.append(round(battery, 2))
-        logs.append(_build_log_entry(step, pos, battery, 0, total_distance, [], "move"))
+        logs.append(_build_log_entry(step, pos, battery, 0, total_distance, [], "standby"))
 
         if battery <= 0:
             termination_reason = reason
@@ -143,7 +160,7 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
             if pos != mission.start_pos:
                 active_target = mission.start_pos
             else:
-                if planner._is_day(step) and battery < MAX_BATTERY:
+                if should_wait_for_day():
                     if not standby("battery_depleted_waiting"):
                         break
                     continue
@@ -184,12 +201,12 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
             reserve_blocks,
             battery,
             step,
-            max_speed=1,
+            max_speed=3,
         )
-        dist_moved = 1 if safe_speed > 0 and len(current_path) > 0 else 0
+        dist_moved = min(safe_speed, len(current_path)) if safe_speed > 0 else 0
 
         if dist_moved <= 0:
-            if planner._is_day(step) and battery < MAX_BATTERY:
+            if should_wait_for_day():
                 if not standby("battery_depleted_recharging"):
                     break
                 continue
@@ -227,7 +244,12 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
 
     all_collected = len(remaining_minerals) == 0
     returned_home = pos == mission.start_pos
-    mission_success = returned_home and battery > 0 and step <= max_steps
+    mission_success = (
+        returned_home
+        and battery > 0
+        and step <= max_steps
+        and (all_collected if collect_all else True)
+    )
 
     return {
         "path": path,
@@ -235,6 +257,7 @@ def run_simulation(map_file: str | Path, time_limit_hours: int = 24) -> dict:
         "battery": battery_log,
         "steps_used": step,
         "success": mission_success,
+        "collect_all_mode": collect_all,
         "all_collected": all_collected,
         "returned_home": returned_home,
         "total_minerals": total_minerals,
