@@ -1,10 +1,12 @@
 import React, { useMemo } from 'react';
-import { SimulationResult, SimLogEntry } from '../types';
+import { SimulationResult, SimLogEntry, CameraMode } from '../types';
 
 interface DashboardProps {
   simulationResult: SimulationResult | null;
   currentStep: number;
   isPlaying: boolean;
+  cameraMode: CameraMode;
+  onCameraModeChange: (mode: CameraMode) => void;
 }
 
 const formatTime = (hours: number) => {
@@ -14,7 +16,13 @@ const formatTime = (hours: number) => {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ simulationResult, currentStep, isPlaying }) => {
+const Dashboard: React.FC<DashboardProps> = ({ 
+  simulationResult, 
+  currentStep, 
+  isPlaying,
+  cameraMode,
+  onCameraModeChange
+}) => {
   const log: SimLogEntry | null = useMemo(() => {
     if (!simulationResult?.logs?.length) return null;
     return simulationResult.logs[Math.min(currentStep, simulationResult.logs.length - 1)];
@@ -121,6 +129,35 @@ const Dashboard: React.FC<DashboardProps> = ({ simulationResult, currentStep, is
             </div>
             <strong className="metric-value">{mineralProgress}%</strong>
             <span className="metric-sub">{simulationResult?.termination_reason ?? 'No run loaded.'}</span>
+          </div>
+
+          <div className="metric-card metric-card--battery">
+            <div className="metric-topline">
+              <span className="metric-label">Camera view</span>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button 
+                className={`command-button flex-1 text-[10px] py-1 ${cameraMode === 'follow' ? 'command-button--primary' : 'command-button--ghost'}`}
+                onClick={() => onCameraModeChange('follow')}
+              >
+                Follow
+              </button>
+              <button 
+                className={`command-button flex-1 text-[10px] py-1 ${cameraMode === 'top' ? 'command-button--primary' : 'command-button--ghost'}`}
+                onClick={() => onCameraModeChange('top')}
+              >
+                Top
+              </button>
+              <button 
+                className={`command-button flex-1 text-[10px] py-1 ${cameraMode === 'detached' ? 'command-button--primary' : 'command-button--ghost'}`}
+                onClick={() => onCameraModeChange('detached')}
+              >
+                Detach
+              </button>
+            </div>
+            <span className="metric-sub mt-2 block">
+              {cameraMode === 'detached' ? 'WASD to move, Drag to rotate' : 'Auto-tracking mode'}
+            </span>
           </div>
         </div>
       </div>

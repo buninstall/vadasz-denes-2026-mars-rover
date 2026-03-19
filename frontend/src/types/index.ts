@@ -89,5 +89,7 @@ export interface ComparisonRun {
   success: boolean;
 }
 
+export type CameraMode = 'follow' | 'top' | 'detached';
+
 // Full path from backend: array of [row, col] points
 export type PathPoint = [number, number];

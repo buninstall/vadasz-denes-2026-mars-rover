@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Sky, Stars, useGLTF, Clone, OrbitControls, ContactShadows, Environment, Float, PerspectiveCamera } from '@react-three/drei';
 import { EffectComposer, Bloom, Noise, Vignette, ToneMapping } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import { MapData, SimulationResult } from '../types';
+import { MapData, SimulationResult, CameraMode } from '../types';
 import { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
 // Preload models
@@ -23,6 +23,7 @@ interface SceneProps {
   showEnergyHeatmap?: boolean;
   photoMode?: boolean;
   hideHudOverlay?: boolean;
+  cameraMode?: CameraMode;
 }
 
 // ==== SETTINGS ====
@@ -828,16 +829,80 @@ const MarsSurface = React.memo(() => {
   );
 });
 
-const CameraController = ({ roverPosRef }: { roverPosRef: React.MutableRefObject<THREE.Vector3> }) => {
+const CameraController = ({ 
+  roverPosRef, 
+  mode 
+}: { 
+  roverPosRef: React.MutableRefObject<THREE.Vector3>,
+  mode: CameraMode
+}) => {
   const controlsRef = useRef<OrbitControlsImpl>(null);
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
   const lastTargetRef = useRef(new THREE.Vector3());
   const initializedRef = useRef(false);
 
-  useFrame(() => {
+  // For detached mode movement
+  const keys = useRef<Record<string, boolean>>({});
+  const lastModeRef = useRef<CameraMode>(mode);
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { keys.current[e.key.toLowerCase()] = true; };
+    const up = (e: KeyboardEvent) => { keys.current[e.key.toLowerCase()] = false; };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, []);
+
+  useFrame((state, delta) => {
     const controls = controlsRef.current;
     if (!controls) return;
 
+    // Detect mode change for zoom reset
+    if (lastModeRef.current !== 'follow' && mode === 'follow') {
+      // Zoom in when coming back to follow
+      const targetPos = roverPosRef.current.clone();
+      const idealOffset = new THREE.Vector3(0, 12, 18);
+      camera.position.lerp(targetPos.clone().add(idealOffset), 0.1);
+    }
+    lastModeRef.current = mode;
+
+    if (mode === 'detached') {
+      // Manual movement in detached mode
+      const speed = 60 * delta;
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      forward.y = 0;
+      forward.normalize();
+      
+      const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+
+      if (keys.current['w']) camera.position.addScaledVector(forward, speed);
+      if (keys.current['s']) camera.position.addScaledVector(forward, -speed);
+      if (keys.current['a']) camera.position.addScaledVector(right, -speed);
+      if (keys.current['d']) camera.position.addScaledVector(right, speed);
+      if (keys.current['q']) camera.position.y += speed;
+      if (keys.current['e']) camera.position.y -= speed;
+
+      // Update the controls target to be in front of the camera so rotating feels natural
+      const lookAtTarget = new THREE.Vector3();
+      camera.getWorldDirection(lookAtTarget);
+      controls.target.copy(camera.position).add(lookAtTarget.multiplyScalar(10));
+      controls.update(); 
+      return;
+    }
+
+    if (mode === 'top') {
+      const target = new THREE.Vector3(0, 0, 0); // Center of map
+      camera.position.lerp(new THREE.Vector3(0, 150, 0.1), Math.min(1, 4 * delta));
+      controls.target.lerp(target, Math.min(1, 4 * delta));
+      controls.update();
+      return;
+    }
+
+    // Default 'follow' mode
     const target = roverPosRef.current.clone();
     target.y += 1.1;
 
@@ -849,8 +914,8 @@ const CameraController = ({ roverPosRef }: { roverPosRef: React.MutableRefObject
       return;
     }
 
-    const delta = target.clone().sub(lastTargetRef.current);
-    camera.position.add(delta);
+    const tDelta = target.clone().sub(lastTargetRef.current);
+    camera.position.add(tDelta);
     controls.target.copy(target);
     lastTargetRef.current.copy(target);
     controls.update();
@@ -859,15 +924,15 @@ const CameraController = ({ roverPosRef }: { roverPosRef: React.MutableRefObject
   return (
     <OrbitControls
       ref={controlsRef}
-      enablePan={false}
+      enablePan={mode === 'detached'}
       enableZoom={true}
       enableRotate={true}
       enableDamping={true}
       dampingFactor={0.08}
-      minDistance={8}
-      maxDistance={340}
-      maxPolarAngle={Math.PI / 2.05}
-      minPolarAngle={0.08}
+      minDistance={mode === 'top' ? 20 : 8}
+      maxDistance={600}
+      maxPolarAngle={mode === 'top' ? 0.1 : Math.PI / 2.05}
+      minPolarAngle={0}
     />
   );
 };
@@ -946,6 +1011,7 @@ const Scene: React.FC<SceneProps> = ({
   showEnergyHeatmap = false,
   photoMode = false,
   hideHudOverlay = false,
+  cameraMode = 'follow',
 }) => {
   const stepRef = useRef(0);
   const isMiningRef = useRef(false);
@@ -1245,7 +1311,7 @@ const Scene: React.FC<SceneProps> = ({
           </EffectComposer>
 
           <fog attach="fog" args={[fogColor, 10, RENDER_DISTANCE]} />
-          <CameraController roverPosRef={roverPosRef} />
+          <CameraController roverPosRef={roverPosRef} mode={cameraMode} />
         </Suspense>
       </Canvas>
 

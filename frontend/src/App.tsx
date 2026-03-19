@@ -7,7 +7,7 @@ import LogViewer from './components/LogViewer';
 import Minimap from './components/Minimap';
 import { useSimulation } from './hooks/useSimulation';
 import PostMissionReport from './components/PostMissionReport';
-import { MapLoadSource, SimLogEntry } from './types';
+import { MapLoadSource, SimLogEntry, CameraMode } from './types';
 
 function LoadingScreen({ onLoaded }: { onLoaded: () => void }) {
   const { progress, active } = useProgress();
@@ -72,6 +72,7 @@ export default function App() {
   const [stepOverride, setStepOverride] = useState<number | null>(null);
   const [reportDismissed, setReportDismissed] = useState(false);
   const [mapLoadError, setMapLoadError] = useState<string | null>(null);
+  const [cameraMode, setCameraMode] = useState<CameraMode>('follow');
   const startupFileInputRef = useRef<HTMLInputElement>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -189,7 +190,7 @@ export default function App() {
                 onClick={() => handleInitialMapSelection('random')}
                 disabled={loading}
               >
-                Random backend map
+                Random map
               </button>
 
               <button
@@ -197,7 +198,7 @@ export default function App() {
                 onClick={() => handleInitialMapSelection('static')}
                 disabled={loading}
               >
-                Static backend map
+                Static map
               </button>
 
               <input
@@ -261,6 +262,7 @@ export default function App() {
           onStep={handleStep}
           onComplete={handleComplete}
           stepOverride={stepOverride}
+          cameraMode={cameraMode}
         />
       </div>
 
@@ -272,6 +274,8 @@ export default function App() {
                 simulationResult={simulationResult}
                 currentStep={currentStep}
                 isPlaying={isPlaying}
+                cameraMode={cameraMode}
+                onCameraModeChange={setCameraMode}
               />
             </div>
 
