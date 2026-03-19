@@ -1,7 +1,7 @@
 # Projekt Bemutató Narráció (Mars Rover 2026)
 
 ## 1. Az algoritmus alapfilozófiája
-Ebben a projektben egy olyan autonóm útvonaltervezőt alkottunk meg, amely a biztonság és a hatékonyság egyensúlyát tartja szem előtt. A szoftver nem egyszerűen a legközelebbi ásványt veszi célba, hanem klaszter-alapú pontozási rendszert használ. A rendszer a környező ásványok sűrűségét, klaszterméretét, a peremhelyzetet (frontier), valamint az oda-vissza út energia- és időigényét együtt értékeli.
+Ebben a projektben egy olyan útvonaltervezőt alkottunk meg, amely a biztonság és a hatékonyság egyensúlyát tartja szem előtt. A szoftver nem egyszerűen a legközelebbi ásványt veszi célba, hanem klaszter-alapú pontozási rendszert használ. A rendszer a környező ásványok sűrűségét, klaszterméretét, a peremhelyzetet (frontier), valamint az oda-vissza út energia- és időigényét együtt értékeli.
 
 ## 2. Miért "hagy ki" ásványokat a rover?
 A videón látható, hogy a rover néha elhalad ásványok mellett anélkül, hogy felvenné őket. Ez a tervezett optimalizáció következménye. A rendszer három sebességi fokozatot használ, és 2-es vagy 3-as sebességnél fél óra alatt több cellát léphet, így csak az aktuális félórás mozgás végén tud bányászni.
@@ -16,5 +16,3 @@ Ha egy lépés energetikailag nem biztonságos, a rover tud várakozni (standby)
 ## 4. Megjegyzések és kérdések (audit alapján)
 - **Megjegyzés:** A jelenlegi kódban a „mission successful” feltétel engedi a 0.0 végső akkumulátort is (nem lehet negatív, de lehet nulla).
 - **Kérdés a zsűrihez:** Elfogadott-e az az értelmezés, hogy nappal egy akció akkor is végrehajtható, ha a lépés elején az akkumulátor önmagában nem fedezné a fogyasztást, de a félórás nappali töltéssel együtt a nettó energia nem lesz negatív?
-- **Megjegyzés:** Van ismert edge case, amikor az aktuális célpont megtartása miatt idő végére nem ér vissza a rover, noha az energia modell helyes.
-- **Megjegyzés:** A `passable_cells` paraméter jelenleg cache-kulcsban szerepel, de az A* útkeresés tényleges bejárását nem befolyásolja.
