@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { MapData, SimulationResult } from '../types';
+import { ComparisonRun, MapData, SimulationResult } from '../types';
 
 interface MinimapProps {
   map: MapData;
   simulationResult: SimulationResult | null;
   currentStep: number;
+  comparisonRuns?: ComparisonRun[];
+  showEnergyHeatmap?: boolean;
 }
 
 const CELL = 3;
@@ -20,7 +22,13 @@ const CELL_COLORS: Record<string, string> = {
   '.': '#121b22',
 };
 
-const Minimap: React.FC<MinimapProps> = ({ map, simulationResult, currentStep }) => {
+const Minimap: React.FC<MinimapProps> = ({
+  map,
+  simulationResult,
+  currentStep,
+  comparisonRuns = [],
+  showEnergyHeatmap = false,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const staticCanvas = useMemo(() => {
@@ -48,6 +56,16 @@ const Minimap: React.FC<MinimapProps> = ({ map, simulationResult, currentStep })
 
   const plannedPath = useMemo(() => simulationResult?.path ?? null, [simulationResult]);
 
+  const startCell = useMemo<[number, number]>(() => {
+    if (simulationResult) return simulationResult.start;
+    for (let row = 0; row < map.grid.length; row++) {
+      for (let col = 0; col < map.grid[row].length; col++) {
+        if (map.grid[row][col] === 'S') return [row, col];
+      }
+    }
+    return [0, 0];
+  }, [simulationResult, map]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -56,6 +74,64 @@ const Minimap: React.FC<MinimapProps> = ({ map, simulationResult, currentStep })
     if (!ctx) return;
 
     ctx.drawImage(staticCanvas, 0, 0);
+
+    if (showEnergyHeatmap) {
+      const [startRow, startCol] = startCell;
+      const maxDist = Math.sqrt(map.grid.length * map.grid.length + (map.grid[0]?.length ?? map.grid.length) ** 2) / 2;
+
+      for (let y = 0; y < map.grid.length; y++) {
+        for (let x = 0; x < map.grid[y].length; x++) {
+          if (map.grid[y][x] === '#') continue;
+
+          const dRow = y - startRow;
+          const dCol = x - startCol;
+          const distanceRisk = Math.min(Math.sqrt(dRow * dRow + dCol * dCol) / Math.max(maxDist, 1), 1);
+
+          let obstaclePenalty = 0;
+          for (let oy = -1; oy <= 1; oy++) {
+            for (let ox = -1; ox <= 1; ox++) {
+              if (oy === 0 && ox === 0) continue;
+              const ny = y + oy;
+              const nx = x + ox;
+              if (ny < 0 || nx < 0 || ny >= map.grid.length || nx >= map.grid[0].length) continue;
+              if (map.grid[ny][nx] === '#') obstaclePenalty += 0.04;
+            }
+          }
+
+          const risk = Math.min(distanceRisk + obstaclePenalty, 1);
+          const red = Math.round(255 * risk);
+          const green = Math.round(200 * (1 - risk));
+          ctx.fillStyle = `rgba(${red}, ${green}, 75, 0.26)`;
+          ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+        }
+      }
+    }
+
+    if (comparisonRuns.length) {
+      const ghostPalette = [
+        'rgba(180, 180, 255, 0.28)',
+        'rgba(140, 230, 255, 0.24)',
+        'rgba(214, 178, 255, 0.24)',
+      ];
+
+      comparisonRuns
+        .filter((run) => run.path.length > 1)
+        .slice(0, 3)
+        .forEach((run, index) => {
+          ctx.beginPath();
+          ctx.strokeStyle = ghostPalette[index % ghostPalette.length];
+          ctx.lineWidth = 1;
+
+          run.path.forEach(([row, col], pointIndex) => {
+            const px = col * CELL + CELL / 2;
+            const py = row * CELL + CELL / 2;
+            if (pointIndex === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          });
+
+          ctx.stroke();
+        });
+    }
 
     if (plannedPath && plannedPath.length > 1) {
       ctx.beginPath();
@@ -71,16 +147,24 @@ const Minimap: React.FC<MinimapProps> = ({ map, simulationResult, currentStep })
 
       const traversed = plannedPath.slice(0, Math.min(currentStep + 1, plannedPath.length));
       if (traversed.length > 1) {
-        ctx.beginPath();
-        ctx.strokeStyle = 'rgba(247, 171, 74, 0.92)';
-        ctx.lineWidth = 1.5;
-        traversed.forEach(([row, col], index) => {
-          const px = col * CELL + CELL / 2;
-          const py = row * CELL + CELL / 2;
-          if (index === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        });
-        ctx.stroke();
+        for (let i = 1; i < traversed.length; i++) {
+          const [prevRow, prevCol] = traversed[i - 1];
+          const [row, col] = traversed[i];
+          const speed = simulationResult?.logs?.[Math.min(i, simulationResult.logs.length - 1)]?.speed ?? 1;
+
+          const segmentColor = speed >= 2.5
+            ? 'rgba(110, 232, 130, 0.92)'
+            : speed >= 1.5
+              ? 'rgba(247, 171, 74, 0.92)'
+              : 'rgba(117, 231, 255, 0.92)';
+
+          ctx.beginPath();
+          ctx.strokeStyle = segmentColor;
+          ctx.lineWidth = 1.5;
+          ctx.moveTo(prevCol * CELL + CELL / 2, prevRow * CELL + CELL / 2);
+          ctx.lineTo(col * CELL + CELL / 2, row * CELL + CELL / 2);
+          ctx.stroke();
+        }
       }
     }
 
@@ -128,7 +212,16 @@ const Minimap: React.FC<MinimapProps> = ({ map, simulationResult, currentStep })
         }
       }
     }
-  }, [staticCanvas, plannedPath, currentStep, simulationResult, map]);
+  }, [
+    staticCanvas,
+    plannedPath,
+    currentStep,
+    simulationResult,
+    map,
+    comparisonRuns,
+    showEnergyHeatmap,
+    startCell,
+  ]);
 
   const collectedCount = useMemo(() => {
     if (!simulationResult) return 0;
@@ -164,6 +257,7 @@ const Minimap: React.FC<MinimapProps> = ({ map, simulationResult, currentStep })
             <span className="minimap-summary-item">
               {simulationResult ? `${collectedCount}/${totalMinerals}` : 'Idle'}
             </span>
+            <span className="minimap-summary-item">{comparisonRuns.length} ghosts</span>
           </div>
         </div>
 
@@ -188,11 +282,13 @@ const Minimap: React.FC<MinimapProps> = ({ map, simulationResult, currentStep })
           {[
             ['legend-swatch legend-swatch--rover', 'Rover'],
             ['legend-swatch legend-swatch--path', 'Path'],
+            ['legend-swatch legend-swatch--ghost', 'Ghost'],
             ['legend-swatch legend-swatch--blue', 'B'],
             ['legend-swatch legend-swatch--amber', 'Y'],
             ['legend-swatch legend-swatch--green', 'G'],
+            [showEnergyHeatmap ? 'legend-swatch legend-swatch--heat' : 'legend-swatch legend-swatch--path', showEnergyHeatmap ? 'Heat' : ''],
           ].map(([className, label]) => (
-            <div key={label} className="legend-item">
+            <div key={label} className="legend-item" style={{ display: label ? 'flex' : 'none' }}>
               <span className={className} />
               <span>{label}</span>
             </div>

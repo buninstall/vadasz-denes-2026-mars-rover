@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { MapData, ReplayEntry, SimulationResult } from '../types';
+import { ComparisonRun, MapData, ReplayEntry, SimulationResult } from '../types';
 import { simulationApi, SimulationSummary } from '../services/api';
 
 export const useSimulation = () => {
@@ -8,6 +8,24 @@ export const useSimulation = () => {
   const [loading, setLoading] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [replays, setReplays] = useState<ReplayEntry[]>([]);
+  const [comparisonRuns, setComparisonRuns] = useState<ComparisonRun[]>([]);
+
+  const registerComparisonRun = useCallback((result: SimulationResult, label: string, runId?: string) => {
+    const id = runId ?? `live-${Date.now()}`;
+    const entry: ComparisonRun = {
+      id,
+      label,
+      path: result.path,
+      mineralsCollected: result.minerals.length,
+      stepsUsed: result.steps_used,
+      success: result.success,
+    };
+
+    setComparisonRuns((prev) => {
+      const withoutCurrent = prev.filter((item) => item.id !== id);
+      return [entry, ...withoutCurrent].slice(0, 4);
+    });
+  }, []);
 
   // Load map on mount
   useEffect(() => {
@@ -58,6 +76,7 @@ export const useSimulation = () => {
       const data = await simulationApi.startSimulation(hours, map.filename);
       setSimulationResult(data);
       setIsPlaying(true);
+      registerComparisonRun(data, `Live ${new Date().toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' })}`);
 
       // Refresh replays from backend (simulation auto-saved by backend)
       fetchReplays();
@@ -92,12 +111,17 @@ export const useSimulation = () => {
         setMap({ grid: record.mapGrid as any, filename: record.mapFile || 'unknown' });
       }
       setIsPlaying(true);
+      registerComparisonRun(
+        record.result,
+        `Replay ${new Date(record.createdAt).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' })}`,
+        replayId,
+      );
     } catch (err) {
       console.error('Failed to load replay:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [registerComparisonRun]);
 
   const deleteReplay = useCallback(async (replayId: string) => {
     try {
@@ -127,6 +151,7 @@ export const useSimulation = () => {
     isPlaying,
     loading,
     replays,
+    comparisonRuns,
     start,
     loadReplay,
     deleteReplay,

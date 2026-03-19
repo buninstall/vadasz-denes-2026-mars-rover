@@ -76,5 +76,14 @@ export interface ReplayEntry {
   result: SimulationResult;
 }
 
+export interface ComparisonRun {
+  id: string;
+  label: string;
+  path: [number, number][];
+  mineralsCollected: number;
+  stepsUsed: number;
+  success: boolean;
+}
+
 // Full path from backend: array of [row, col] points
 export type PathPoint = [number, number];

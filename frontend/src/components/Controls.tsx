@@ -32,7 +32,7 @@ const Controls: React.FC<ControlsProps> = ({
   mapFilename,
   mapSize,
 }) => {
-  const [hours, setHours] = useState(24);
+  const [hoursInput, setHoursInput] = useState('24');
   const [selectedReplayId, setSelectedReplayId] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -50,51 +50,46 @@ const Controls: React.FC<ControlsProps> = ({
   );
 
   return (
-    <section className="panel controls-panel">
+    <section className="panel controls-panel controls-panel--compact">
       <div className="panel-header">
         <div>
           <p className="panel-kicker">Controls</p>
-          <h2 className="panel-title">Run Setup</h2>
+          <h2 className="panel-title">Run</h2>
         </div>
         <span className="panel-code">Run</span>
       </div>
 
       <div className="controls-body">
-        <div className="control-meta">
-          <div className="control-meta-block control-meta-block--main">
-            <span className="control-meta-label">Map package</span>
-            <span className="control-meta-item control-meta-item--primary">{mapFilename ?? 'Unknown map'}</span>
-          </div>
-          <div className="control-meta-block">
-            <span className="control-meta-label">Grid</span>
-            <span className="control-meta-item">{mapSize ?? 'N/A'}</span>
-          </div>
-        </div>
+        <p className="controls-inline-meta">
+          {mapFilename ?? 'Unknown map'} • {mapSize ?? 'N/A'}
+        </p>
 
         <div className="control-section control-section--card">
-          <div className="section-heading section-heading--stacked">
+          <div className="section-heading">
             <span className="field-label">Time limit</span>
-            <span className="field-note">Set the mission window before launch.</span>
+            <span className="field-note">min 24h</span>
           </div>
           <div className="launch-row">
             <label className="field-stack field-stack--tight" htmlFor="mission-hours">
-              <span className="control-mini-label">Mission hours</span>
+              <span className="control-mini-label">Hours</span>
               <input
                 id="mission-hours"
                 className="control-input"
                 type="number"
                 min="24"
-                value={hours}
-                onChange={(event) => setHours(parseInt(event.target.value, 10) || 24)}
+                value={hoursInput}
+                onChange={(event) => setHoursInput(event.target.value)}
               />
-              <span className="field-note">Minimum 24 hours</span>
             </label>
 
             <div className="field-stack field-stack--action">
-              <span className="control-mini-label">Launch</span>
+              <span className="control-mini-label">Start</span>
               <button
                 className="command-button command-button--primary command-button--launch"
-                onClick={() => onStart(hours)}
+                onClick={() => {
+                  const val = parseInt(hoursInput, 10);
+                  onStart(isNaN(val) ? 24 : val);
+                }}
                 disabled={isLoading}
               >
                 {isLoading ? 'Loading' : 'Start'}
@@ -105,9 +100,9 @@ const Controls: React.FC<ControlsProps> = ({
 
         {onUploadMap && (
           <div className="control-section control-section--card">
-            <div className="section-heading section-heading--stacked">
+            <div className="section-heading">
               <span className="field-label">Map upload</span>
-              <span className="field-note">Replace the terrain package with a CSV file.</span>
+              <span className="field-note">CSV</span>
             </div>
             <input
               ref={fileInputRef}
@@ -136,7 +131,7 @@ const Controls: React.FC<ControlsProps> = ({
           <div className="section-heading">
             <div className="section-heading-copy">
               <span className="field-label">Replays</span>
-              <span className="field-note">Saved mission archives</span>
+              <span className="field-note">Saved runs</span>
             </div>
             <span className="control-count">{replays.length}</span>
           </div>

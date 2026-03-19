@@ -11,12 +11,6 @@ A 3D-s színtér (Scene) dinamikusan kövesse a szimuláció óráját. Éjszaka
 ## 3. "Energy-Heatmap" Overlay
 Egy gombbal bekapcsolható réteg a térképen, ami megmutatja, hol a legköltségesebb a mozgás (nehéz terep, nagy távolság a bázistól). Minél pirosabb egy terület, annál nagyobb a kockázata, hogy onnan nem ér vissza a rover.
 
-## 4. Szenzor-adat Vizualizáció (LIDAR Scan)
-Mozgás közben a rover "pásztázza" a környezetét. Egy kör alakú effekt (shader) fusson körbe a rover körül, ami mutatja a látótávolságát, mintha valós időben térképezné fel a környező ásványokat.
-
-## 5. Operatív HUD (Head-Up Display)
-Ne csak statikus panelek legyenek. A Dashboard kapjon egy "sci-fi" keretet, ahol az adatok (akku, sebesség, koordináták) kis animációkkal, analóg-stílusú mutatókkal ugrálnak, mint egy vadászgép pilótafülkéjében.
-
 ## 6. Interaktív Eseménynapló (Log Timeline)
 A LogViewer ne csak egy lista legyen, hanem egy görgethető idővonal. Ha rákattintunk egy eseményre (pl. "Bányászat elkezdve"), a kamera ugorjon oda a roverre az adott időpillanatban.
 
@@ -62,5 +56,3 @@ A minimapon ne csak pontok legyenek, hanem az algoritmus által tervezett teljes
 ## 19. "Post-Mission" Report Card
 A szimuláció végén egy látványos, exportálható infografika: "Összes megtett út", "Átlagos energiahatékonyság", "Legveszélyesebb pillanat", "Legjövedelmezőbb környék".
 
-## 20. Valós Idejű "Code-View" Pip
-Egy kis ablak a sarokban (opcionális), ahol látszódik a backend-től érkező JSON stream vagy a futó pszeudokód aktuális sora. Ez bizonyítja a szimuláció hitelességét (hogy nem csak egy animáció, hanem valódi számítás).

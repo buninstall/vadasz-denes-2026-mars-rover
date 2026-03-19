@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useProgress } from '@react-three/drei';
 import Scene from './components/Scene';
 import Dashboard from './components/Dashboard';
@@ -6,6 +6,8 @@ import Controls from './components/Controls';
 import LogViewer from './components/LogViewer';
 import Minimap from './components/Minimap';
 import { useSimulation } from './hooks/useSimulation';
+import PostMissionReport from './components/PostMissionReport';
+import { SimLogEntry } from './types';
 
 function LoadingScreen({ onLoaded }: { onLoaded: () => void }) {
   const { progress, active } = useProgress();
@@ -33,7 +35,6 @@ function LoadingScreen({ onLoaded }: { onLoaded: () => void }) {
     <div className="boot-screen" style={{ opacity }}>
       <div className="boot-grid">
         <div className="boot-panel">
-          <p className="boot-kicker">ARES SURFACE SYSTEMS</p>
           <h1 className="boot-title">ROVER CONTROL DECK</h1>
           <div className="boot-progress-track">
             <div className="boot-progress-fill" style={{ width: `${progress}%` }} />
@@ -48,12 +49,6 @@ function LoadingScreen({ onLoaded }: { onLoaded: () => void }) {
   );
 }
 
-const countTerrainMinerals = (grid: string[][]) =>
-  grid.reduce(
-    (total, row) => total + row.filter((cell) => cell === 'B' || cell === 'Y' || cell === 'G').length,
-    0,
-  );
-
 export default function App() {
   const {
     map,
@@ -67,13 +62,73 @@ export default function App() {
     clearReplays,
     onSimulationComplete,
     uploadCustomMap,
+    comparisonRuns,
   } = useSimulation();
+
   const [isLoaded, setIsLoaded] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
+  const [stepOverride, setStepOverride] = useState<number | null>(null);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [photoMode, setPhotoMode] = useState(false);
+  const [reportDismissed, setReportDismissed] = useState(false);
+
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const lastMiningSoundStepRef = useRef(-1);
+
+  const ensureAudioContext = useCallback((): AudioContext | null => {
+    if (typeof window === 'undefined') return null;
+    if (!audioContextRef.current) {
+      const AudioCtor =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtor) return null;
+      audioContextRef.current = new AudioCtor();
+    }
+    return audioContextRef.current;
+  }, []);
+
+  const playMiningBeep = useCallback(() => {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+
+    ctx.resume().catch(() => undefined);
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    oscillator.type = 'sawtooth';
+    oscillator.frequency.setValueAtTime(920, ctx.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(560, ctx.currentTime + 0.11);
+
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.035, ctx.currentTime + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.14);
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.16);
+  }, [ensureAudioContext]);
+
+  const currentLog: SimLogEntry | null = useMemo(() => {
+    if (!simulationResult?.logs?.length) return null;
+    return simulationResult.logs[Math.min(currentStep, simulationResult.logs.length - 1)] ?? null;
+  }, [simulationResult, currentStep]);
+  const isMissionFinished =
+    !!simulationResult && currentStep >= Math.max(simulationResult.path.length - 1, 0) && !isPlaying;
+  const showPostMissionReport = isMissionFinished && !reportDismissed && !photoMode;
+  const showSuccessfulReportOnly = showPostMissionReport && !!simulationResult?.success;
 
   const handleStep = useCallback((step: number) => {
     setCurrentStep(step);
+    setStepOverride(null);
   }, []);
+
+  const handleJumpToStep = useCallback((step: number) => {
+    if (!simulationResult) return;
+    const boundedStep = Math.max(0, Math.min(step, simulationResult.path.length - 1));
+    setCurrentStep(boundedStep);
+    setStepOverride(boundedStep);
+  }, [simulationResult]);
 
   const handleComplete = useCallback(() => {
     onSimulationComplete();
@@ -85,16 +140,33 @@ export default function App() {
   useEffect(() => {
     if (simulationResult) {
       setCurrentStep(0);
+      setStepOverride(0);
+      setReportDismissed(false);
+      setPhotoMode(false);
     }
   }, [simulationResult]);
+
+  useEffect(() => {
+    if (!currentLog || currentLog.step === lastMiningSoundStepRef.current) return;
+    if (currentLog.action !== 'mine') return;
+    lastMiningSoundStepRef.current = currentLog.step;
+    playMiningBeep();
+  }, [currentLog, playMiningBeep]);
+
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => undefined);
+        audioContextRef.current = null;
+      }
+    };
+  }, []);
 
   if (!map) {
     return (
       <div className="boot-screen boot-screen--standalone">
         <div className="boot-grid">
-          <div className="boot-panel">
-            <p className="boot-kicker">ARES SURFACE SYSTEMS</p>
-            <h1 className="boot-title">ROVER CONTROL DECK</h1>
+          <div className="boot-panel">            <h1 className="boot-title">ROVER CONTROL DECK</h1>
             <div className="boot-progress-track">
               <div className="boot-progress-fill" style={{ width: '52%' }} />
             </div>
@@ -111,76 +183,68 @@ export default function App() {
   const mapWidth = map.grid[0]?.length ?? 0;
   const mapHeight = map.grid.length;
   const mapSize = `${mapWidth} x ${mapHeight}`;
-  const terrainMinerals = countTerrainMinerals(map.grid);
-  const archiveCount = replays.length;
-  const missionStatus = !simulationResult
-    ? loading
-      ? 'Loading'
-      : 'Ready'
-    : isPlaying
-      ? 'Running'
-      : simulationResult.success
-        ? 'Done'
-        : 'Stopped';
-
   return (
     <div className="app-shell">
       <LoadingScreen onLoaded={() => setIsLoaded(true)} />
 
-      <div
-        className="scene-layer"
-        style={{
-          opacity: isLoaded ? 1 : 0,
-          pointerEvents: isLoaded ? 'auto' : 'none',
-        }}
-      >
-        <Scene
-          map={map}
-          simulationResult={simulationResult}
-          isPlaying={isPlaying}
-          stepDurationSec={0.06}
-          onStep={handleStep}
-          onComplete={handleComplete}
-        />
-      </div>
+      {!showSuccessfulReportOnly && (
+        <div
+          className="scene-layer"
+          style={{
+            opacity: isLoaded ? 1 : 0,
+            pointerEvents: isLoaded ? 'auto' : 'none',
+          }}
+        >
+          <Scene
+            map={map}
+            simulationResult={simulationResult}
+            isPlaying={isPlaying}
+            stepDurationSec={0.06}
+            onStep={handleStep}
+            onComplete={handleComplete}
+            stepOverride={stepOverride}
+            showEnergyHeatmap={showHeatmap}
+            photoMode={photoMode}
+            hideHudOverlay={showSuccessfulReportOnly}
+          />
+        </div>
+      )}
 
-      {isLoaded && (
+      {isLoaded && !showSuccessfulReportOnly && (
+        <div className="mission-tools pointer-events-auto">
+          <button
+            className={`mission-tool-btn ${showHeatmap ? 'mission-tool-btn--active' : ''}`}
+            onClick={() => setShowHeatmap((prev) => !prev)}
+          >
+            Heatmap
+          </button>
+          <button
+            className={`mission-tool-btn ${photoMode ? 'mission-tool-btn--active' : ''}`}
+            onClick={() => setPhotoMode((prev) => !prev)}
+          >
+            {photoMode ? 'Exit photo' : 'Photo mode'}
+          </button>
+        </div>
+      )}
+
+      {isLoaded && !photoMode && !showSuccessfulReportOnly && (
         <div className="mission-shell">
-          <div className="mission-topbar panel pointer-events-auto">
-            <div className="topbar-block">
-              <span className="topbar-label">Map</span>
-              <strong className="topbar-value">{map.filename}</strong>
-            </div>
-            <div className="topbar-block">
-              <span className="topbar-label">Size</span>
-              <strong className="topbar-value">{mapSize}</strong>
-            </div>
-            <div className="topbar-block">
-              <span className="topbar-label">Minerals</span>
-              <strong className="topbar-value">{terrainMinerals}</strong>
-            </div>
-            <div className="topbar-block">
-              <span className="topbar-label">Replays</span>
-              <strong className="topbar-value">{archiveCount}</strong>
-            </div>
-            <div className="topbar-block topbar-block--status">
-              <span className="topbar-label">Status</span>
-              <strong className={`topbar-value ${isPlaying ? 'topbar-value--live' : ''}`}>{missionStatus}</strong>
-            </div>
-          </div>
-
           <div className="mission-column mission-column--primary">
             <div className="pointer-events-auto">
-              <Dashboard simulationResult={simulationResult} currentStep={currentStep} isPlaying={isPlaying} />
+              <Dashboard
+                simulationResult={simulationResult}
+                currentStep={currentStep}
+                isPlaying={isPlaying}
+              />
             </div>
 
             <div className="pointer-events-auto">
-              <LogViewer simulationResult={simulationResult} currentStep={currentStep} />
+              <LogViewer simulationResult={simulationResult} currentStep={currentStep} onJumpToStep={handleJumpToStep} />
             </div>
           </div>
 
           <div className="mission-column mission-column--secondary">
-            <div className="pointer-events-auto">
+            <div className="pointer-events-auto" style={{ width: 224 }}>
               <Controls
                 onStart={start}
                 onReplay={loadReplay}
@@ -197,7 +261,25 @@ export default function App() {
         </div>
       )}
 
-      {isLoaded && <Minimap map={map} simulationResult={simulationResult} currentStep={currentStep} />}
+      {isLoaded && !photoMode && !showSuccessfulReportOnly && (
+        <Minimap
+          map={map}
+          simulationResult={simulationResult}
+          currentStep={currentStep}
+          comparisonRuns={comparisonRuns}
+          showEnergyHeatmap={showHeatmap}
+        />
+      )}
+
+      {showPostMissionReport && simulationResult && (
+        <div className="post-report-shell post-report-shell--center pointer-events-auto">
+          <PostMissionReport
+            simulationResult={simulationResult}
+            currentStep={currentStep}
+            onClose={() => setReportDismissed(true)}
+          />
+        </div>
+      )}
     </div>
   );
 }

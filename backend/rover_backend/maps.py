@@ -2,7 +2,7 @@ import csv
 import random
 from pathlib import Path
 
-from .config import BACKEND_DIR, DEFAULT_MAP_NAME, DEFAULT_MAP_PATH, MAPS_DIR
+from .config import BACKEND_DIR, DEFAULT_MAP_NAME, DEFAULT_MAP_PATH, MAPS_DIR, UPLOADS_DIR
 
 
 def load_map_from_csv(file_path: str | Path) -> list[list[str]] | None:
@@ -53,7 +53,13 @@ def resolve_map_path(map_name: str | Path) -> Path:
     candidates.append(MAPS_DIR / requested.name)
 
     seen: set[Path] = set()
-    for candidate in candidates:
+    for candidate in [
+        requested,
+        DEFAULT_MAP_PATH,
+        BACKEND_DIR / requested,
+        MAPS_DIR / requested.name,
+        UPLOADS_DIR / requested.name,
+    ]:
         if candidate in seen:
             continue
         seen.add(candidate)

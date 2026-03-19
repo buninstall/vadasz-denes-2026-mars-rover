@@ -11,8 +11,6 @@ useGLTF.preload('/models/Rocks.glb');
 useGLTF.preload('/models/Gold ore.glb');
 useGLTF.preload('/models/Crystal.glb');
 
-type CameraMode = 'follow' | 'overview';
-
 interface SceneProps {
   map: MapData;
   simulationResult: SimulationResult | null;
@@ -20,6 +18,10 @@ interface SceneProps {
   stepDurationSec?: number;
   onStep?: (step: number) => void;
   onComplete?: () => void;
+  stepOverride?: number | null;
+  showEnergyHeatmap?: boolean;
+  photoMode?: boolean;
+  hideHudOverlay?: boolean;
 }
 
 // ==== SETTINGS ====
@@ -152,40 +154,240 @@ function getModelGroundOffset(scene: THREE.Group, cacheKey: string, scale: numbe
   return offset;
 }
 
-// ── Path line drawn in world space showing the full planned route
-const PathLine = React.memo(({ pathPoints }: { pathPoints: THREE.Vector3[] }) => {
-  const geometry = useMemo(() => {
+// ── Path lines: future plan (ghost) + traversed route (live)
+const PathLine = React.memo(({ pathPoints, currentStep }: { pathPoints: THREE.Vector3[]; currentStep: number }) => {
+  const traversedGeometry = useMemo(() => {
     if (pathPoints.length < 2) return null;
-    const geo = new THREE.BufferGeometry().setFromPoints(
-      pathPoints.map(p => new THREE.Vector3(p.x, p.y + 0.4, p.z))
-    );
-    return geo;
-  }, [pathPoints]);
+    const end = Math.min(Math.max(currentStep, 1), pathPoints.length - 1);
+    const points = pathPoints
+      .slice(0, end + 1)
+      .map((point) => new THREE.Vector3(point.x, point.y + 0.42, point.z));
+    if (points.length < 2) return null;
+    return new THREE.BufferGeometry().setFromPoints(points);
+  }, [pathPoints, currentStep]);
 
-  if (!geometry) return null;
+  const futureGeometry = useMemo(() => {
+    if (pathPoints.length < 2) return null;
+    const start = Math.min(Math.max(currentStep, 0), pathPoints.length - 1);
+    const points = pathPoints
+      .slice(start)
+      .map((point) => new THREE.Vector3(point.x, point.y + 0.4, point.z));
+    if (points.length < 2) return null;
+    return new THREE.BufferGeometry().setFromPoints(points);
+  }, [pathPoints, currentStep]);
+
+  if (!futureGeometry && !traversedGeometry) return null;
 
   return (
-    // @ts-ignore
-    <line geometry={geometry}>
-      <lineBasicMaterial color="#d1d5db" opacity={0.25} transparent linewidth={1} />
-    </line>
+    <>
+      {futureGeometry && (
+        // @ts-ignore
+        <line geometry={futureGeometry}>
+          <lineBasicMaterial color="#9eddf0" opacity={0.2} transparent linewidth={1} />
+        </line>
+      )}
+      {traversedGeometry && (
+        // @ts-ignore
+        <line geometry={traversedGeometry}>
+          <lineBasicMaterial color="#f5b56a" opacity={0.88} transparent linewidth={1.4} />
+        </line>
+      )}
+    </>
   );
 });
 
 // ── Mining indicator: pulsing ring at position when robot is mining
 const MiningEffect = React.memo(({ position }: { position: [number, number, number] }) => {
   const ringRef = useRef<THREE.Mesh>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
   useFrame(({ clock }) => {
     if (ringRef.current) {
-      const t = (Math.sin(clock.getElapsedTime() * 8) + 1) / 2;
-      ringRef.current.scale.setScalar(0.5 + t * 1.5);
-      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = 0.6 - t * 0.5;
+      ringRef.current.scale.setScalar(1.2);
+      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = 0.4;
+    }
+    if (coreRef.current) {
+      coreRef.current.scale.setScalar(0.6);
+      (coreRef.current.material as THREE.MeshBasicMaterial).opacity = 0.6;
     }
   });
   return (
-    <mesh ref={ringRef} position={[position[0], position[1] + 0.4, position[2]]}>
-      <torusGeometry args={[0.6, 0.08, 6, 24]} />
-      <meshBasicMaterial color="#e5e7eb" transparent opacity={0.6} />
+    <group position={[position[0], position[1] + 0.4, position[2]]}>
+      <mesh ref={ringRef}>
+        <torusGeometry args={[0.6, 0.08, 6, 24]} />
+        <meshBasicMaterial color="#e5e7eb" transparent opacity={0.6} />
+      </mesh>
+      <mesh ref={coreRef}>
+        <sphereGeometry args={[0.24, 12, 12]} />
+        <meshBasicMaterial color="#fff7d8" transparent opacity={0.45} />
+      </mesh>
+    </group>
+  );
+});
+
+const EnergyHeatmapOverlay = React.memo(({ map, start, visible }: { map: MapData; start: [number, number]; visible: boolean }) => {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  const data = useMemo(() => {
+    const result: { x: number; y: number; z: number; color: THREE.Color }[] = [];
+    const [startRow, startCol] = start;
+    const maxDist = Math.sqrt(map.grid.length * map.grid.length + (map.grid[0]?.length ?? map.grid.length) ** 2) / 2;
+
+    for (let row = 0; row < map.grid.length; row++) {
+      for (let col = 0; col < map.grid[row].length; col++) {
+        if (map.grid[row][col] === '#') continue;
+
+        const wx = col * CELL_SIZE - OFFSET;
+        const wz = row * CELL_SIZE - OFFSET;
+        const distance = Math.sqrt((row - startRow) ** 2 + (col - startCol) ** 2);
+        const distanceRisk = Math.min(distance / Math.max(maxDist, 1), 1);
+
+        let obstaclePenalty = 0;
+        for (let oy = -1; oy <= 1; oy++) {
+          for (let ox = -1; ox <= 1; ox++) {
+            if (oy === 0 && ox === 0) continue;
+            const ny = row + oy;
+            const nx = col + ox;
+            if (ny < 0 || nx < 0 || ny >= map.grid.length || nx >= map.grid[0].length) continue;
+            if (map.grid[ny][nx] === '#') obstaclePenalty += 0.04;
+          }
+        }
+
+        const risk = Math.min(distanceRisk + obstaclePenalty, 1);
+        const color = new THREE.Color().setRGB(
+          THREE.MathUtils.lerp(0.14, 0.95, risk),
+          THREE.MathUtils.lerp(0.82, 0.24, risk),
+          0.18,
+        );
+
+        result.push({
+          x: wx,
+          y: estimateTerrainHeight(wx, wz) + 0.07,
+          z: wz,
+          color,
+        });
+      }
+    }
+    return result;
+  }, [map, start]);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || !visible) return;
+    const dummy = new THREE.Object3D();
+
+    data.forEach((entry, index) => {
+      dummy.position.set(entry.x, entry.y, entry.z);
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.set(0.95, 0.95, 0.95);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(index, dummy.matrix);
+      mesh.setColorAt(index, entry.color);
+    });
+
+    mesh.count = data.length;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }, [data, visible]);
+
+  if (!visible || data.length === 0) return null;
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, data.length]}>
+      <planeGeometry args={[CELL_SIZE * 0.95, CELL_SIZE * 0.95]} />
+      <meshBasicMaterial vertexColors transparent opacity={0.25} depthWrite={false} />
+    </instancedMesh>
+  );
+});
+
+const BaseBeacon = React.memo(({ position }: { position: [number, number, number] }) => {
+  return (
+    <group position={[position[0], estimateTerrainHeight(position[0], position[2]) + 0.2, position[2]]}>
+      <mesh position={[0, 0.1, 0]}>
+        <cylinderGeometry args={[0.4, 0.4, 0.2, 32]} />
+        <meshBasicMaterial color="#9fe3ff" />
+      </mesh>
+      <pointLight position={[0, 0.6, 0]} intensity={1.1} distance={30} color="#8dd9ff" />
+    </group>
+  );
+});
+
+const RoverHeadlights = React.memo(({
+  position,
+  heading,
+  active,
+}: {
+  position: [number, number, number];
+  heading: THREE.Vector3;
+  active: boolean;
+}) => {
+  const leftTarget = useMemo(() => new THREE.Object3D(), []);
+  const rightTarget = useMemo(() => new THREE.Object3D(), []);
+  const leftRef = useRef<THREE.SpotLight>(null);
+  const rightRef = useRef<THREE.SpotLight>(null);
+
+  useFrame(() => {
+    if (!active || !leftRef.current || !rightRef.current) return;
+    const normalized = heading.lengthSq() > 0.0001 ? heading.clone().normalize() : new THREE.Vector3(0, 0, 1);
+    const right = new THREE.Vector3(normalized.z, 0, -normalized.x).normalize();
+
+    const base = new THREE.Vector3(position[0], position[1] + 1.0, position[2]);
+    const forward = normalized.clone().multiplyScalar(1.2);
+    const leftPos = base.clone().add(forward).add(right.clone().multiplyScalar(-0.36));
+    const rightPos = base.clone().add(forward).add(right.clone().multiplyScalar(0.36));
+    const targetPos = base.clone().add(normalized.clone().multiplyScalar(7));
+
+    leftRef.current.position.copy(leftPos);
+    rightRef.current.position.copy(rightPos);
+    leftTarget.position.copy(targetPos.clone().add(right.clone().multiplyScalar(-0.2)));
+    rightTarget.position.copy(targetPos.clone().add(right.clone().multiplyScalar(0.2)));
+    leftRef.current.target = leftTarget;
+    rightRef.current.target = rightTarget;
+  });
+
+  if (!active) return null;
+
+  return (
+    <>
+      <primitive object={leftTarget} />
+      <primitive object={rightTarget} />
+      <spotLight ref={leftRef} intensity={3.1} distance={26} angle={0.34} penumbra={0.6} color="#f8fcff" />
+      <spotLight ref={rightRef} intensity={3.1} distance={26} angle={0.34} penumbra={0.6} color="#f8fcff" />
+    </>
+  );
+});
+
+const RoverDustTrail = React.memo(({
+  position,
+  heading,
+  active,
+}: {
+  position: [number, number, number];
+  heading: THREE.Vector3;
+  active: boolean;
+}) => {
+  const trailRef = useRef<THREE.Mesh>(null);
+
+  useFrame(({ clock }) => {
+    if (!trailRef.current) return;
+    if (!active) {
+      (trailRef.current.material as THREE.MeshBasicMaterial).opacity = 0;
+      return;
+    }
+
+    const normalized = heading.lengthSq() > 0.0001 ? heading.clone().normalize() : new THREE.Vector3(0, 0, 1);
+    const pos = new THREE.Vector3(position[0], position[1] + 0.05, position[2]).add(normalized.multiplyScalar(-1.3));
+    trailRef.current.position.copy(pos);
+    trailRef.current.rotation.y = Math.atan2(normalized.x, normalized.z);
+
+    const flicker = (Math.sin(clock.getElapsedTime() * 12) + 1) / 2;
+    trailRef.current.scale.setScalar(0.9 + flicker * 0.5);
+    (trailRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + flicker * 0.08;
+  });
+
+  return (
+    <mesh ref={trailRef} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[0.8, 2.2, 24]} />
+      <meshBasicMaterial color="#cca17e" transparent opacity={0} side={THREE.DoubleSide} depthWrite={false} />
     </mesh>
   );
 });
@@ -233,12 +435,13 @@ const SceneryInstanced = React.memo(() => {
 });
 
 // ── Rover
-const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speedRef }: {
+const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speedRef, wearLevel }: {
   pathPoints: THREE.Vector3[];
   stepRef: React.MutableRefObject<number>;
   isMiningRef: React.MutableRefObject<boolean>;
   roverPosRef: React.MutableRefObject<THREE.Vector3>;
   speedRef: React.MutableRefObject<number>;
+  wearLevel: number;
 }) => {
   const { scene } = useGLTF('/models/Rover.glb');
   const roverRef = useRef<THREE.Group>(null);
@@ -257,6 +460,38 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     roverRef.current.position.set(start.x, y, start.z);
     velocityRef.current.set(0, 0, 0);
   }, [pathPoints, groundOffset]);
+
+  useEffect(() => {
+    if (!roverRef.current) return;
+
+    roverRef.current.traverse((child) => {
+      if (!(child as THREE.Mesh).isMesh) return;
+      const mesh = child as THREE.Mesh;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+      materials.forEach((material) => {
+        if (!(material as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
+        const stdMaterial = material as THREE.MeshStandardMaterial;
+
+        if (!stdMaterial.userData.baseColor) {
+          stdMaterial.userData.baseColor = stdMaterial.color.clone();
+        }
+        if (stdMaterial.userData.baseRoughness === undefined) {
+          stdMaterial.userData.baseRoughness = stdMaterial.roughness;
+        }
+
+        const baseColor = stdMaterial.userData.baseColor as THREE.Color;
+        const dustyColor = baseColor.clone().lerp(new THREE.Color('#8d6e55'), wearLevel * 0.48);
+        stdMaterial.color.copy(dustyColor);
+        stdMaterial.roughness = THREE.MathUtils.clamp(
+          (stdMaterial.userData.baseRoughness as number) + wearLevel * 0.28,
+          0,
+          1,
+        );
+        stdMaterial.needsUpdate = true;
+      });
+    });
+  }, [wearLevel]);
 
   useFrame((_, delta) => {
     if (!roverRef.current || pathPoints.length === 0) return;
@@ -576,54 +811,46 @@ const MarsSurface = React.memo(() => {
   );
 });
 
-const CameraController = ({
-  targetRef,
-  cameraModeRef,
-}: {
-  targetRef: React.MutableRefObject<THREE.Vector3>;
-  cameraModeRef: React.MutableRefObject<CameraMode>;
-}) => {
+const CameraController = ({ roverPosRef }: { roverPosRef: React.MutableRefObject<THREE.Vector3> }) => {
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const { camera } = useThree();
-  const prevModeRef = useRef<CameraMode>('follow');
-  const smoothTarget = useRef(new THREE.Vector3());
+  const lastTargetRef = useRef(new THREE.Vector3());
+  const initializedRef = useRef(false);
 
-  useFrame((_, delta) => {
-    const ctrl = controlsRef.current;
-    if (!ctrl) return;
+  useFrame(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
 
-    const mode = cameraModeRef.current;
+    const target = roverPosRef.current.clone();
+    target.y += 1.1;
 
-    if (prevModeRef.current !== mode) {
-      prevModeRef.current = mode;
-      if (mode === 'overview') {
-        camera.position.set(0, 120, 0.1);
-        ctrl.target.set(0, 0, 0);
-        smoothTarget.current.set(0, 0, 0);
-        ctrl.update();
-      }
+    if (!initializedRef.current) {
+      controls.target.copy(target);
+      lastTargetRef.current.copy(target);
+      initializedRef.current = true;
+      controls.update();
+      return;
     }
 
-    if (mode === 'follow') {
-      const lerpFactor = Math.min(1, 14 * delta);
-      smoothTarget.current.lerp(targetRef.current, lerpFactor);
-      ctrl.target.copy(smoothTarget.current);
-      ctrl.update();
-    } else {
-      ctrl.update();
-    }
+    const delta = target.clone().sub(lastTargetRef.current);
+    camera.position.add(delta);
+    controls.target.copy(target);
+    lastTargetRef.current.copy(target);
+    controls.update();
   });
 
   return (
     <OrbitControls
       ref={controlsRef}
-      enablePan={true}
+      enablePan={false}
       enableZoom={true}
-      minDistance={5}
-      maxDistance={300}
       enableRotate={true}
-      maxPolarAngle={Math.PI / 2.2}
-      minPolarAngle={0}
+      enableDamping={true}
+      dampingFactor={0.08}
+      minDistance={8}
+      maxDistance={340}
+      maxPolarAngle={Math.PI / 2.05}
+      minPolarAngle={0.08}
     />
   );
 };
@@ -631,15 +858,13 @@ const CameraController = ({
 // ── Core animation controller — position-synced
 const SimulationController = ({
   simulationResult, isPlayingRef, stepRef, isMiningRef,
-  cameraTargetRef, pathPoints, pathHeights, stepDuration, speedRef, roverPosRef, onStepBatch, onComplete,
+  pathPoints, stepDuration, speedRef, roverPosRef, onStepBatch, onComplete,
 }: {
   simulationResult: SimulationResult;
   isPlayingRef: React.MutableRefObject<boolean>;
   stepRef: React.MutableRefObject<number>;
   isMiningRef: React.MutableRefObject<boolean>;
-  cameraTargetRef: React.MutableRefObject<THREE.Vector3>;
   pathPoints: THREE.Vector3[];
-  pathHeights: number[];
   stepDuration: number;
   speedRef: React.MutableRefObject<number>;
   roverPosRef: React.MutableRefObject<THREE.Vector3>;
@@ -685,10 +910,6 @@ const SimulationController = ({
       const log = simulationResult.logs[step] ?? null;
       isMiningRef.current = log ? log.action === 'mine' : false;
 
-      if (pathPoints[step]) {
-        cameraTargetRef.current.set(pathPoints[step].x, (pathHeights[step] ?? 0) + 2, pathPoints[step].z);
-      }
-
       onStepBatch(step);
     }
   });
@@ -704,30 +925,35 @@ const Scene: React.FC<SceneProps> = ({
   stepDurationSec = 0.06,
   onStep,
   onComplete,
+  stepOverride,
+  showEnergyHeatmap = false,
+  photoMode = false,
+  hideHudOverlay = false,
 }) => {
   const stepRef = useRef(0);
   const isMiningRef = useRef(false);
   const isPlayingRef = useRef(false);
 
-  // Find the 'S' starting point on the map grid FIRST to use in initial state
-  const mapStartWorld: [number, number, number] = useMemo(() => {
+  const mapStartCell: [number, number] = useMemo(() => {
     for (let row = 0; row < map.grid.length; row++) {
       for (let col = 0; col < map.grid[row].length; col++) {
         if (map.grid[row][col] === 'S') {
-          return [col * CELL_SIZE - OFFSET, 0, row * CELL_SIZE - OFFSET];
+          return [row, col];
         }
       }
     }
-    return [0, 0, 0];
+    return [0, 0];
   }, [map]);
 
-  const cameraTargetRef = useRef(new THREE.Vector3(mapStartWorld[0], 2, mapStartWorld[2]));
+  const mapStartWorld: [number, number, number] = useMemo(() => {
+    return [mapStartCell[1] * CELL_SIZE - OFFSET, 0, mapStartCell[0] * CELL_SIZE - OFFSET];
+  }, [mapStartCell]);
+
   const roverPosRef = useRef(new THREE.Vector3(mapStartWorld[0], 0, mapStartWorld[2]));
 
-  // Update refs when a new map is loaded
+  // Update rover ref when a new map is loaded
   useEffect(() => {
     if (!isPlayingRef.current) {
-      cameraTargetRef.current.set(mapStartWorld[0], 2, mapStartWorld[2]);
       roverPosRef.current.set(mapStartWorld[0], 0, mapStartWorld[2]);
     }
   }, [mapStartWorld]);
@@ -738,13 +964,15 @@ const Scene: React.FC<SceneProps> = ({
 
   const [localPaused, setLocalPaused] = useState(false);
 
-  const [cameraMode, setCameraMode] = useState<CameraMode>('follow');
-  const cameraModeRef = useRef<CameraMode>('follow');
-  useEffect(() => { cameraModeRef.current = cameraMode; }, [cameraMode]);
+  useEffect(() => {
+    if (photoMode) {
+      setLocalPaused(true);
+    }
+  }, [photoMode]);
 
   useEffect(() => {
-    isPlayingRef.current = isPlaying && !localPaused;
-  }, [isPlaying, localPaused]);
+    isPlayingRef.current = isPlaying && !localPaused && !photoMode;
+  }, [isPlaying, localPaused, photoMode]);
 
   // Reset on new simulation
   useEffect(() => {
@@ -755,7 +983,7 @@ const Scene: React.FC<SceneProps> = ({
       setCollectedStep(0);
       if (simulationResult) {
         const [row, col] = simulationResult.start;
-        cameraTargetRef.current.set(col * CELL_SIZE - OFFSET, 2, row * CELL_SIZE - OFFSET);
+        roverPosRef.current.set(col * CELL_SIZE - OFFSET, 0, row * CELL_SIZE - OFFSET);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -780,6 +1008,22 @@ const Scene: React.FC<SceneProps> = ({
 
   const [collectedStep, setCollectedStep] = useState(0);
 
+  useEffect(() => {
+    if (stepOverride === null || !simulationResult || pathPoints.length === 0) return;
+    const clamped = Math.max(0, Math.min(stepOverride, pathPoints.length - 1));
+    stepRef.current = clamped;
+    setCollectedStep(clamped);
+
+    const point = pathPoints[clamped];
+    if (point) {
+      const y = (pathHeights[clamped] ?? estimateTerrainHeight(point.x, point.z)) + 2;
+      roverPosRef.current.set(point.x, y, point.z);
+    }
+
+    const log = simulationResult.logs[clamped] ?? null;
+    isMiningRef.current = log ? log.action === 'mine' : false;
+  }, [stepOverride, simulationResult, pathPoints, pathHeights]);
+
   const handleStepBatch = useCallback((step: number) => {
     setCollectedStep(step);
     onStep?.(step);
@@ -789,15 +1033,6 @@ const Scene: React.FC<SceneProps> = ({
     isPlayingRef.current = false;
     onComplete?.();
   }, [onComplete]);
-
-  const [isDay, setIsDay] = useState(true);
-  const prevIsDayRef = useRef(true);
-  useEffect(() => {
-    if (!simulationResult?.logs?.length) return;
-    const log = simulationResult.logs[Math.min(collectedStep, simulationResult.logs.length - 1)];
-    const nowDay = log?.is_day ?? true;
-    if (nowDay !== prevIsDayRef.current) { prevIsDayRef.current = nowDay; setIsDay(nowDay); }
-  }, [simulationResult, collectedStep]);
 
   const startPos: [number, number, number] = useMemo(() => {
     if (simulationResult) {
@@ -822,9 +1057,49 @@ const Scene: React.FC<SceneProps> = ({
     return [pathPoints[idx].x, pathHeights[idx] ?? 0, pathPoints[idx].z];
   }, [pathPoints, pathHeights, collectedStep, mapStartWorld]);
 
+  const currentLog = useMemo(() => {
+    if (!simulationResult?.logs?.length) return null;
+    return simulationResult.logs[Math.min(collectedStep, simulationResult.logs.length - 1)] ?? null;
+  }, [simulationResult, collectedStep]);
+
+  const isDay = currentLog?.is_day ?? true;
+  const simHour = currentLog ? (6 + currentLog.time_hours) % 24 : 12;
+
+  const sunPosition = useMemo<[number, number, number]>(() => {
+    const angle = (simHour / 24) * Math.PI * 2;
+    const radius = 140;
+    const x = Math.cos(angle - Math.PI / 2) * radius;
+    const z = Math.sin(angle - Math.PI / 2) * radius;
+    const y = isDay ? 130 : 52;
+    return [x, y, z];
+  }, [simHour, isDay]);
+
+  const fogColor = isDay ? '#c7865f' : '#8f6a5c';
+
+  const roverHeading = useMemo(() => {
+    if (pathPoints.length < 2) return new THREE.Vector3(0, 0, 1);
+    const idx = Math.min(collectedStep, pathPoints.length - 2);
+    const from = pathPoints[idx];
+    const to = pathPoints[idx + 1];
+    const heading = new THREE.Vector3(to.x - from.x, 0, to.z - from.z);
+    if (heading.lengthSq() < 0.0001) return new THREE.Vector3(0, 0, 1);
+    return heading.normalize();
+  }, [pathPoints, collectedStep]);
+
+  const wearLevel = useMemo(() => {
+    if (!simulationResult?.logs?.length) return 0;
+    const end = Math.min(collectedStep, simulationResult.logs.length - 1);
+    const logs = simulationResult.logs.slice(0, end + 1);
+    if (!logs.length) return 0;
+    const highSpeed = logs.filter((entry) => entry.speed >= 2).length;
+    const distance = logs[logs.length - 1].distance_traveled;
+    const wearScore = Math.min(100, distance * 0.9 + highSpeed * 1.8);
+    return wearScore / 100;
+  }, [simulationResult, collectedStep]);
+
   const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
   const canPlay = !!simulationResult;
-  const isActivelyPlaying = isPlaying && !localPaused;
+  const isActivelyPlaying = isPlaying && !localPaused && !photoMode;
 
   return (
     <div className="w-full h-screen absolute inset-0 z-0">
@@ -835,36 +1110,47 @@ const Scene: React.FC<SceneProps> = ({
         frameloop="always"
       >
         <Suspense fallback={null}>
-          {isDay ? (
-            <>
-              <Sky sunPosition={[100, 20, 100]} turbidity={0.1} rayleigh={0.5} />
-              <ambientLight intensity={0.55} />
-              <directionalLight
-                position={[50, 50, 20]}
-                intensity={1.35}
-                castShadow
-                shadow-mapSize={[1024, 1024]}
-                shadow-camera-far={150}
-                shadow-camera-left={-80}
-                shadow-camera-right={80}
-                shadow-camera-top={80}
-                shadow-camera-bottom={-80}
-              />
-            </>
-          ) : (
-            <>
-              <Stars radius={100} depth={50} count={4000} factor={4} saturation={0} fade speed={1} />
-              <ambientLight intensity={0.62} color="#b8c0d0" />
-              <hemisphereLight intensity={0.38} color="#d5deef" groundColor="#1c2230" />
-              <directionalLight position={[-60, 80, -30]} intensity={0.55} color="#dbe4f2" />
-              <pointLight position={[currentRoverPos[0], currentRoverPos[1] + 1.2, currentRoverPos[2]]} intensity={5} distance={46} color="#f8fafc" castShadow />
-            </>
-          )}
+          <>
+            <Sky
+              sunPosition={sunPosition}
+              turbidity={isDay ? 0.22 : 0.55}
+              rayleigh={isDay ? 0.62 : 0.4}
+              mieCoefficient={isDay ? 0.005 : 0.012}
+              mieDirectionalG={0.78}
+            />
+            {!isDay && <Stars radius={460} depth={120} count={2200} factor={4} fade speed={0.3} />}
+            <ambientLight intensity={isDay ? 0.98 : 0.78} color={isDay ? '#e9edf5' : '#e4e8f2'} />
+            <hemisphereLight
+              intensity={isDay ? 0.82 : 0.72}
+              color={isDay ? '#e8edf7' : '#d7deef'}
+              groundColor={isDay ? '#6e5a4b' : '#5f4b42'}
+            />
+            <directionalLight
+              position={sunPosition}
+              intensity={isDay ? 1.34 : 0.84}
+              castShadow
+              shadow-mapSize={[1024, 1024]}
+              shadow-camera-far={150}
+              shadow-camera-left={-80}
+              shadow-camera-right={80}
+              shadow-camera-top={80}
+              shadow-camera-bottom={-80}
+            />
+            <pointLight
+              position={[currentRoverPos[0], currentRoverPos[1] + 1.2, currentRoverPos[2]]}
+              intensity={isDay ? 2.4 : 3.2}
+              distance={46}
+              color="#f8fafc"
+              castShadow
+            />
+          </>
 
           <MarsSurface />
+          <EnergyHeatmapOverlay map={map} start={simulationResult?.start ?? mapStartCell} visible={showEnergyHeatmap} />
+          <BaseBeacon position={mapStartWorld} />
           <SceneryInstanced />
 
-          {pathPoints.length > 0 && <PathLine pathPoints={pathPoints} />}
+          {pathPoints.length > 0 && <PathLine pathPoints={pathPoints} currentStep={collectedStep} />}
 
           <ObstaclesInstanced map={map} />
 
@@ -878,7 +1164,11 @@ const Scene: React.FC<SceneProps> = ({
             isMiningRef={isMiningRef}
             roverPosRef={roverPosRef}
             speedRef={speedRef}
+            wearLevel={wearLevel}
           />
+
+          <RoverDustTrail position={currentRoverPos} heading={roverHeading} active={isActivelyPlaying} />
+          <RoverHeadlights position={currentRoverPos} heading={roverHeading} active={!isDay} />
 
           {simulationResult && isPlaying && (
             <SimulationController
@@ -887,9 +1177,7 @@ const Scene: React.FC<SceneProps> = ({
               isPlayingRef={isPlayingRef}
               stepRef={stepRef}
               isMiningRef={isMiningRef}
-              cameraTargetRef={cameraTargetRef}
               pathPoints={pathPoints}
-              pathHeights={pathHeights}
               stepDuration={stepDurationSec}
               speedRef={speedRef}
               roverPosRef={roverPosRef}
@@ -898,13 +1186,13 @@ const Scene: React.FC<SceneProps> = ({
             />
           )}
 
-          <fog attach="fog" args={[isDay ? '#d28c63' : '#111827', 90, RENDER_DISTANCE]} />
-          <CameraController targetRef={cameraTargetRef} cameraModeRef={cameraModeRef} />
+          <fog attach="fog" args={[fogColor, 90, RENDER_DISTANCE]} />
+          <CameraController roverPosRef={roverPosRef} />
         </Suspense>
       </Canvas>
 
       {/* ── Simulation controls overlay ── */}
-      {canPlay && (
+      {canPlay && !hideHudOverlay && (
         <div
           style={{
             position: 'absolute',
@@ -932,7 +1220,7 @@ const Scene: React.FC<SceneProps> = ({
               backdropFilter: 'blur(8px)',
             }}
           >
-            <span style={{ color: '#9ca3af', fontSize: 11, alignSelf: 'center', marginRight: 4 }}>Sebesség</span>
+            <span style={{ color: '#9ca3af', fontSize: 11, alignSelf: 'center', marginRight: 4 }}>Speed</span>
             {SPEEDS.map(s => (
               <button
                 key={s}
@@ -956,7 +1244,7 @@ const Scene: React.FC<SceneProps> = ({
             ))}
           </div>
 
-          {/* Play / Pause + Camera mode */}
+          {/* Play / Pause */}
           <div
             style={{
               display: 'flex',
@@ -971,7 +1259,7 @@ const Scene: React.FC<SceneProps> = ({
           >
             <button
               onClick={() => setLocalPaused(p => !p)}
-              disabled={!isPlaying}
+              disabled={!isPlaying || photoMode}
               style={{
                 background: isActivelyPlaying ? 'transparent' : '#f3f4f6',
                 border: '1px solid ' + (isActivelyPlaying ? '#4b5563' : '#f3f4f6'),
@@ -979,37 +1267,18 @@ const Scene: React.FC<SceneProps> = ({
                 color: isActivelyPlaying ? '#d1d5db' : '#030712',
                 fontSize: 18,
                 padding: '4px 14px',
-                cursor: isPlaying ? 'pointer' : 'not-allowed',
-                opacity: isPlaying ? 1 : 0.4,
+                cursor: isPlaying && !photoMode ? 'pointer' : 'not-allowed',
+                opacity: isPlaying && !photoMode ? 1 : 0.4,
                 transition: 'all 0.15s',
                 lineHeight: 1,
               }}
-              title={localPaused ? 'Folytatás' : 'Megállítás'}
+              title={localPaused ? 'Resume' : 'Pause'}
             >
-              {localPaused || !isPlaying ? '▶' : '⏸'}
+              {localPaused || !isActivelyPlaying ? '▶' : '⏸'}
             </button>
-
-            <div style={{ width: 1, height: 24, background: '#374151' }} />
-
-            <button
-              onClick={() => setCameraMode(m => m === 'follow' ? 'overview' : 'follow')}
-              style={{
-                background: cameraMode === 'follow' ? '#f3f4f6' : 'transparent',
-                border: '1px solid ' + (cameraMode === 'follow' ? '#f3f4f6' : '#4b5563'),
-                borderRadius: 6,
-                color: cameraMode === 'follow' ? '#030712' : '#d1d5db',
-                fontSize: 11,
-                fontFamily: 'monospace',
-                fontWeight: 700,
-                padding: '5px 12px',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-                whiteSpace: 'nowrap',
-              }}
-              title="Kamera váltás: rover követés / térkép nézet"
-            >
-              {cameraMode === 'follow' ? 'Követés' : 'Áttekintés'}
-            </button>
+            <span style={{ color: '#9ca3af', fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              Manual camera control
+            </span>
           </div>
         </div>
       )}
