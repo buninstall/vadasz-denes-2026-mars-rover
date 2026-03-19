@@ -87,12 +87,21 @@ export default function App() {
   const [showSavedSimulations, setShowSavedSimulations] = useState(false);
   const [pendingJumpStep, setPendingJumpStep] = useState<number | null>(null);
   const [showRandomOptions, setShowRandomOptions] = useState(false);
+  const [startOverride, setStartOverride] = useState<[number, number] | null>(null);
 
   useEffect(() => {
     if (!map) {
       setShowRandomOptions(false);
       setShowSavedSimulations(false);
     }
+  }, [map]);
+
+  useEffect(() => {
+    if (!map) {
+      setStartOverride(null);
+      return;
+    }
+    setStartOverride(null);
   }, [map]);
 
   // Mark loaded if we are already in simulation
@@ -530,6 +539,7 @@ export default function App() {
             onStep={handleStep}
             onComplete={handleComplete}
             stepOverride={stepOverride}
+            startOverride={startOverride}
             cameraMode={cameraMode}
             hideHudOverlay={photoMode}
             localPaused={localPaused}
@@ -565,13 +575,12 @@ export default function App() {
           <div className="mission-column mission-column--secondary">
             <div className="pointer-events-auto" style={{ width: 224 }}>
               <Controls
-                onStart={start}
+                onStart={(hours) => start(hours, startOverride)}
                 onReplay={loadReplay}
                 onDeleteReplay={deleteReplay}
                 onClearReplays={clearReplays}
                 replays={replays}
                 isLoading={loading}
-                onUploadMap={uploadCustomMap}
                 mapFilename={map.sourceFilename ?? map.filename}
                 mapSize={mapSize}
               />
@@ -587,6 +596,9 @@ export default function App() {
             simulationResult={simulationResult}
             currentStep={currentStep}
             comparisonRuns={comparisonRuns}
+            startOverride={startOverride}
+            canEditStart={!simulationResult}
+            onStartOverrideChange={setStartOverride}
           />
         </div>
       )}

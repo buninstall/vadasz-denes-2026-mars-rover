@@ -87,7 +87,7 @@ export const useSimulation = () => {
     fetchReplays();
   }, [fetchReplays]);
 
-  const start = async (hours: number) => {
+  const start = async (hours: number, startOverride?: [number, number] | null) => {
     setLoading(true);
     setIsPlaying(false);
     setSimulationResult(null);
@@ -98,7 +98,7 @@ export const useSimulation = () => {
         throw new Error('No map available to run simulation');
       }
 
-      const data = await simulationApi.startSimulation(hours, map.filename);
+      const data = await simulationApi.startSimulation(hours, map.filename, startOverride ?? null);
       setSimulationResult(data);
       setCurrentSimId(data.sim_id || null);
       setIsPlaying(true);

@@ -85,12 +85,27 @@ export const simulationApi = {
     };
   },
   
-  startSimulation: async (hours: number, mapFile: string): Promise<SimulationResult> => {
-    const response = await api.post('/simulate', {
+  startSimulation: async (
+    hours: number,
+    mapFile: string,
+    startOverride?: [number, number] | null,
+  ): Promise<SimulationResult> => {
+    const payload: {
+      map_file: string;
+      time_limit_hours: number;
+      collect_all: boolean;
+      start_override?: [number, number];
+    } = {
       map_file: mapFile,
       time_limit_hours: hours,
       collect_all: false,
-    });
+    };
+
+    if (startOverride) {
+      payload.start_override = startOverride;
+    }
+
+    const response = await api.post('/simulate', payload);
     return response.data;
   },
 

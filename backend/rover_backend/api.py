@@ -145,7 +145,10 @@ def start_simulation(request: SimulationRequest):
             map_path,
             request.time_limit_hours,
             collect_all=request.collect_all,
+            start_override=request.start_override,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - surfaced as HTTP errors
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -156,6 +159,7 @@ def start_simulation(request: SimulationRequest):
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "hours": request.time_limit_hours,
         "mapFile": request.map_file,
+        "startOverride": request.start_override,
         "mapGrid": load_map_from_csv(map_path),
         "savedStep": 0,
         "result": result,

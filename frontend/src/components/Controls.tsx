@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ReplayEntry } from '../types';
 
 interface ControlsProps {
@@ -8,7 +8,6 @@ interface ControlsProps {
   onClearReplays: () => void;
   replays: ReplayEntry[];
   isLoading: boolean;
-  onUploadMap?: (file: File) => void;
   mapFilename?: string;
   mapSize?: string;
 }
@@ -28,14 +27,12 @@ const Controls: React.FC<ControlsProps> = ({
   onClearReplays,
   replays,
   isLoading,
-  onUploadMap,
   mapFilename,
   mapSize,
 }) => {
   const [hoursInput, setHoursInput] = useState('24');
   const [selectedReplayId, setSelectedReplayId] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!replays.length) {
@@ -107,35 +104,6 @@ const Controls: React.FC<ControlsProps> = ({
             </div>
           </div>
         </div>
-
-        {onUploadMap && (
-          <div className="control-section control-section--card">
-            <div className="section-heading">
-              <span className="field-label">Map upload</span>
-              <span className="field-note">CSV</span>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv"
-              className="sr-only"
-              onChange={(event) => {
-                if (event.target.files && event.target.files.length > 0) {
-                  onUploadMap(event.target.files[0]);
-                  event.target.value = '';
-                }
-              }}
-            />
-
-            <button
-              className="command-button command-button--ghost command-button--full"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading}
-            >
-              Upload map
-            </button>
-          </div>
-        )}
 
         <div className="control-section control-section--card">
           <div className="section-heading">

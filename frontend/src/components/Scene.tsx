@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, Suspense, useMemo, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, Suspense, useMemo, useState, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Sky, Stars, useGLTF, Clone, OrbitControls, Environment, Float, PerspectiveCamera } from '@react-three/drei';
 import { EffectComposer, Bloom, Noise, Vignette, ToneMapping } from '@react-three/postprocessing';
@@ -18,6 +18,7 @@ interface SceneProps {
   map: MapData;
   simulationResult: SimulationResult | null;
   isPlaying: boolean;
+  startOverride?: [number, number] | null;
   stepDurationSec?: number;
   onStep?: (step: number) => void;
   onComplete?: () => void;
@@ -132,24 +133,74 @@ const estimateTerrainHeight = (wx: number, wz: number): number => {
   // Base elevation so outer terrain sits at rim-height level
   const outerBase = RIM_HEIGHT * 0.15;
 
-  return rimProfile + outerBlend * (hills + macroHills + outerBase);
+  const rawOuterTerrain = hills + macroHills + outerBase;
+  const outerDistanceRatio = Math.min(dist / (TERRAIN_SIZE * 0.5), 1);
+  const valleyFloor = THREE.MathUtils.lerp(-1.6, -4.2, outerDistanceRatio);
+  const liftedOuterTerrain =
+    rawOuterTerrain < valleyFloor
+      ? THREE.MathUtils.lerp(rawOuterTerrain, valleyFloor, 0.8)
+      : rawOuterTerrain;
+
+  return rimProfile + outerBlend * liftedOuterTerrain;
 };
 
-/** Extract first mesh geometry+material from a GLTF scene. */
+/** Extract dominant mesh geometry+material from a GLTF scene and normalize pivot. */
 function extractFirstMesh(gltfScene: THREE.Group): { geo: THREE.BufferGeometry; mat: THREE.Material } | null {
   gltfScene.updateWorldMatrix(true, true);
-  let result: { geo: THREE.BufferGeometry; mat: THREE.Material } | null = null;
-  gltfScene.traverse(child => {
-    if (!result && (child as THREE.Mesh).isMesh) {
-      const m = child as THREE.Mesh;
-      const geo = m.geometry.clone();
-      geo.applyMatrix4(m.matrixWorld);
-      geo.computeBoundingBox();
-      const mat = Array.isArray(m.material) ? m.material[0] : m.material;
-      result = { geo, mat };
+  let result: { geo: THREE.BufferGeometry; mat: THREE.Material; score: number } | null = null;
+
+  const stack: THREE.Object3D[] = [gltfScene];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+
+    for (let index = 0; index < node.children.length; index++) {
+      stack.push(node.children[index]);
     }
-  });
-  return result;
+
+    if (!(node as THREE.Mesh).isMesh) continue;
+
+    const mesh = node as THREE.Mesh;
+    const geo = mesh.geometry.clone();
+    geo.applyMatrix4(mesh.matrixWorld);
+    geo.computeBoundingBox();
+
+    const box = geo.boundingBox;
+    if (!box) {
+      geo.dispose();
+      continue;
+    }
+
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const volume = size.x * size.y * size.z;
+    const diagonalSq = size.lengthSq();
+    const score = Math.max(volume, diagonalSq * 0.5);
+
+    if (!Number.isFinite(score) || score <= 0) {
+      geo.dispose();
+      continue;
+    }
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    geo.translate(-center.x, -box.min.y, -center.z);
+    geo.computeBoundingBox();
+
+    const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+
+    if (!result || score > result.score) {
+      if (result) {
+        result.geo.dispose();
+      }
+      result = { geo, mat, score };
+      continue;
+    }
+
+    geo.dispose();
+  }
+
+  return result ? { geo: result.geo, mat: result.mat } : null;
 }
 
 const MODEL_GROUND_OFFSET_CACHE = new Map<string, number>();
@@ -473,7 +524,7 @@ const RoverDustTrail = React.memo(({
 });
 
 // ── Scenery: dense deterministic Mars rock field (outside mission area)
-const SceneryInstanced = React.memo(() => {
+const SceneryInstanced = React.memo(({ protectedPoints }: { protectedPoints: [number, number][] }) => {
   const { scene: boulderScene } = useGLTF('/models/nagykavics.glb');
   const { scene: cliffRockScene } = useGLTF('/models/szikla.glb');
 
@@ -488,6 +539,7 @@ const SceneryInstanced = React.memo(() => {
     supportPoints: THREE.Vector3[];
     floatCheckPoints: THREE.Vector3[];
     footprintRadius: number;
+    robustMinY: number;
   };
 
   const getRockBounds = useCallback((geometry: THREE.BufferGeometry): RockBoundsInfo => {
@@ -501,36 +553,70 @@ const SceneryInstanced = React.memo(() => {
     box.getSize(size);
     const baseSize = Math.max(size.x, size.y, size.z, 0.001);
 
-    const supportPoints: THREE.Vector3[] = [];
     const pos = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
     const minY = box.min.y;
-    const lowBand = Math.max(size.y * 0.22, 0.08);
+    let robustMinY = minY;
+
     if (pos) {
-      const stride = Math.max(1, Math.floor(pos.count / 900));
+      const sampledHeights: number[] = [];
+      const sampleStride = Math.max(1, Math.floor(pos.count / 4200));
+      for (let i = 0; i < pos.count; i += sampleStride) {
+        sampledHeights.push(pos.getY(i));
+      }
+
+      if (sampledHeights.length > 0) {
+        sampledHeights.sort((a, b) => a - b);
+        const percentileIndex = Math.floor((sampledHeights.length - 1) * 0.08);
+        const percentileY = sampledHeights[Math.max(0, Math.min(sampledHeights.length - 1, percentileIndex))];
+        const maxLift = Math.max(0.04, size.y * 0.3);
+        robustMinY = THREE.MathUtils.clamp(percentileY, minY, minY + maxLift);
+      }
+    }
+
+    const envelopeMap = new Map<string, THREE.Vector3>();
+    const quantX = Math.max(size.x / 26, 0.14);
+    const quantZ = Math.max(size.z / 26, 0.14);
+    const supportBandTop = robustMinY + Math.max(size.y * 0.5, 0.24);
+    const supportOutlierFloor = robustMinY - Math.max(0.04, size.y * 0.04);
+
+    if (pos) {
+      const stride = Math.max(1, Math.floor(pos.count / 7600));
       for (let i = 0; i < pos.count; i += stride) {
-        const y = pos.getY(i);
-        if (y <= minY + lowBand) {
-          supportPoints.push(new THREE.Vector3(pos.getX(i), y, pos.getZ(i)));
+        const vx = pos.getX(i);
+        const vy = pos.getY(i);
+        const vz = pos.getZ(i);
+
+        if (vy < supportOutlierFloor || vy > supportBandTop) continue;
+
+        const qx = Math.floor((vx - box.min.x) / quantX);
+        const qz = Math.floor((vz - box.min.z) / quantZ);
+        const key = `${qx}_${qz}`;
+        const existing = envelopeMap.get(key);
+        if (!existing || vy < existing.y) {
+          envelopeMap.set(key, new THREE.Vector3(vx, vy, vz));
         }
       }
     }
 
-    if (supportPoints.length < 36) {
-      const steps = [0, 0.2, 0.4, 0.6, 0.8, 1];
-      for (let xi = 0; xi < steps.length; xi++) {
-        for (let zi = 0; zi < steps.length; zi++) {
+    const supportPoints: THREE.Vector3[] = Array.from(envelopeMap.values());
+    if (supportPoints.length < 120) {
+      const steps = 14;
+      for (let xi = 0; xi < steps; xi++) {
+        const tx = xi / (steps - 1);
+        for (let zi = 0; zi < steps; zi++) {
+          const tz = zi / (steps - 1);
           supportPoints.push(
             new THREE.Vector3(
-              THREE.MathUtils.lerp(box.min.x, box.max.x, steps[xi]),
-              minY,
-              THREE.MathUtils.lerp(box.min.z, box.max.z, steps[zi]),
+              THREE.MathUtils.lerp(box.min.x, box.max.x, tx),
+              robustMinY,
+              THREE.MathUtils.lerp(box.min.z, box.max.z, tz),
             ),
           );
         }
       }
     }
 
-    const maxSupportPoints = 420;
+    const maxSupportPoints = 1400;
     if (supportPoints.length > maxSupportPoints) {
       const trimmed: THREE.Vector3[] = [];
       const pickStride = Math.ceil(supportPoints.length / maxSupportPoints);
@@ -548,15 +634,38 @@ const SceneryInstanced = React.memo(() => {
       if (radius > footprintRadius) footprintRadius = radius;
     }
 
-    const floatCheckPoints: THREE.Vector3[] = [];
-    const checkSteps = [0, 0.17, 0.34, 0.5, 0.66, 0.83, 1];
-    for (let xi = 0; xi < checkSteps.length; xi++) {
-      for (let zi = 0; zi < checkSteps.length; zi++) {
+    const floatCheckPoints: THREE.Vector3[] = [...supportPoints];
+    const checkResolution = 11;
+    for (let xi = 0; xi < checkResolution; xi++) {
+      const tx = xi / (checkResolution - 1);
+      for (let zi = 0; zi < checkResolution; zi++) {
+        const tz = zi / (checkResolution - 1);
         floatCheckPoints.push(
           new THREE.Vector3(
-            THREE.MathUtils.lerp(box.min.x, box.max.x, checkSteps[xi]),
-            minY,
-            THREE.MathUtils.lerp(box.min.z, box.max.z, checkSteps[zi]),
+            THREE.MathUtils.lerp(box.min.x, box.max.x, tx),
+            robustMinY,
+            THREE.MathUtils.lerp(box.min.z, box.max.z, tz),
+          ),
+        );
+      }
+    }
+
+    const centerX = (box.min.x + box.max.x) * 0.5;
+    const centerZ = (box.min.z + box.max.z) * 0.5;
+    const halfX = (box.max.x - box.min.x) * 0.5;
+    const halfZ = (box.max.z - box.min.z) * 0.5;
+    const radialRings = [0.25, 0.5, 0.75, 1.0];
+    const radialSamples = 28;
+
+    for (let ringIndex = 0; ringIndex < radialRings.length; ringIndex++) {
+      const ring = radialRings[ringIndex];
+      for (let sampleIndex = 0; sampleIndex < radialSamples; sampleIndex++) {
+        const angle = (sampleIndex / radialSamples) * Math.PI * 2;
+        floatCheckPoints.push(
+          new THREE.Vector3(
+            centerX + Math.cos(angle) * halfX * ring,
+            robustMinY,
+            centerZ + Math.sin(angle) * halfZ * ring,
           ),
         );
       }
@@ -567,6 +676,7 @@ const SceneryInstanced = React.memo(() => {
       supportPoints,
       floatCheckPoints,
       footprintRadius: Math.max(footprintRadius, 0.2),
+      robustMinY,
     };
   }, []);
 
@@ -587,7 +697,9 @@ const SceneryInstanced = React.memo(() => {
   const outerRadius = TERRAIN_SIZE * 0.46;
   const terrainHalf = TERRAIN_SIZE * 0.5 - 10;
   const playableHalf = (GRID_SIZE * CELL_SIZE) / 2;
-  const playablePadding = 10;
+  const playablePadding = 34;
+  const startSafeRadius = 24;
+  const cameraSafeRadius = 34;
 
   const buildMatrices = (
     count: number,
@@ -608,7 +720,7 @@ const SceneryInstanced = React.memo(() => {
     const dummy = new THREE.Object3D();
     const transformedSupport = new THREE.Vector3();
 
-    const clusterCenters = Array.from({ length: 34 }, (_, index) => {
+    const clusterCenters = Array.from({ length: 48 }, (_, index) => {
       const angle = seededRandom(seedBase + index * 17, 211) * Math.PI * 2;
       const radiusT = Math.pow(seededRandom(seedBase + index * 29, 223), 0.65);
       const radius = THREE.MathUtils.lerp(innerRadius + 40, outerRadius, radiusT);
@@ -619,7 +731,7 @@ const SceneryInstanced = React.memo(() => {
     });
 
     let attempts = 0;
-    const maxAttempts = count * 28;
+    const maxAttempts = count * 110;
     while (matrices.length < count && attempts < maxAttempts) {
       const i = attempts;
       attempts++;
@@ -656,7 +768,8 @@ const SceneryInstanced = React.memo(() => {
         targetSizeMax,
         Math.pow(seededRandom(seedBase + i * 47, 379), 0.85),
       );
-      const scale = (targetSize / bounds.baseSize) * THREE.MathUtils.lerp(1.0, 1.38, distT);
+      const rawScale = (targetSize / bounds.baseSize) * THREE.MathUtils.lerp(1.0, 1.38, distT);
+      const scale = THREE.MathUtils.clamp(rawScale, 0.45, 3.0);
       const footprintRadius = Math.max(0.5, bounds.footprintRadius * scale);
 
       const centerBound = terrainHalf - footprintRadius;
@@ -667,6 +780,19 @@ const SceneryInstanced = React.memo(() => {
       z = THREE.MathUtils.clamp(z, -centerBound, centerBound);
 
       if (Math.abs(x) < playableHalf + playablePadding && Math.abs(z) < playableHalf + playablePadding) {
+        continue;
+      }
+
+      let intersectsProtectedZone = false;
+      for (let protectedIndex = 0; protectedIndex < protectedPoints.length; protectedIndex++) {
+        const [safeX, safeZ] = protectedPoints[protectedIndex];
+        const zoneRadius = (protectedIndex === 0 ? startSafeRadius : cameraSafeRadius) + footprintRadius;
+        if (Math.hypot(x - safeX, z - safeZ) < zoneRadius) {
+          intersectsProtectedZone = true;
+          break;
+        }
+      }
+      if (intersectsProtectedZone) {
         continue;
       }
 
@@ -714,33 +840,89 @@ const SceneryInstanced = React.memo(() => {
         continue;
       }
 
-      const settledY = settleY - embedDepth;
+      const scaleEmbed = THREE.MathUtils.clamp((scale - 1.1) * 0.06, 0, 0.36);
+      const reliefEmbed = THREE.MathUtils.clamp(localRelief * 0.07, 0, 0.22);
+      const sizeAwareEmbed = THREE.MathUtils.clamp(footprintRadius * 0.022, 0.02, 0.28);
+      const settledY = settleY - embedDepth - scaleEmbed - reliefEmbed - sizeAwareEmbed;
 
       dummy.position.set(x, settledY, z);
       dummy.updateMatrix();
 
-      let maxFloatGap = 0;
+      const evaluateFloatGap = (samples: THREE.Vector3[]): { invalid: boolean; maxGap: number; avgPositiveGap: number } => {
+        let maxGap = 0;
+        let positiveGapCount = 0;
+        let positiveGapSum = 0;
+        for (let checkIndex = 0; checkIndex < samples.length; checkIndex++) {
+          transformedSupport.copy(samples[checkIndex]).applyMatrix4(dummy.matrix);
+          const wx = transformedSupport.x;
+          const wz = transformedSupport.z;
+          if (Math.abs(wx) > terrainHalf || Math.abs(wz) > terrainHalf) {
+            return { invalid: true, maxGap: 0, avgPositiveGap: 0 };
+          }
+
+          const ground = estimateTerrainHeight(wx, wz);
+          const gap = transformedSupport.y - ground;
+          if (gap > maxGap) maxGap = gap;
+          if (gap > 0) {
+            positiveGapCount++;
+            positiveGapSum += gap;
+          }
+        }
+
+        return {
+          invalid: false,
+          maxGap,
+          avgPositiveGap: positiveGapCount > 0 ? positiveGapSum / positiveGapCount : 0,
+        };
+      };
+
       let invalidFloatCheck = false;
-      for (let checkIndex = 0; checkIndex < bounds.floatCheckPoints.length; checkIndex++) {
-        transformedSupport.copy(bounds.floatCheckPoints[checkIndex]).applyMatrix4(dummy.matrix);
-        const wx = transformedSupport.x;
-        const wz = transformedSupport.z;
-        if (Math.abs(wx) > terrainHalf || Math.abs(wz) > terrainHalf) {
+      const settleMargin = THREE.MathUtils.clamp(footprintRadius * 0.036, 0.016, 0.14);
+      for (let settlePass = 0; settlePass < 7; settlePass++) {
+        const planeGap = evaluateFloatGap(bounds.floatCheckPoints);
+        if (planeGap.invalid) {
           invalidFloatCheck = true;
           break;
         }
-        const ground = estimateTerrainHeight(wx, wz);
-        const gap = transformedSupport.y - ground;
-        if (gap > maxFloatGap) maxFloatGap = gap;
+
+        const supportGap = evaluateFloatGap(bounds.supportPoints);
+        if (supportGap.invalid) {
+          invalidFloatCheck = true;
+          break;
+        }
+
+        const maxFloatGap = Math.max(planeGap.maxGap, supportGap.maxGap);
+        if (maxFloatGap <= 0.0015) {
+          break;
+        }
+
+        dummy.position.y -= maxFloatGap + settleMargin;
+        dummy.updateMatrix();
       }
 
       if (invalidFloatCheck) {
         continue;
       }
 
-      if (maxFloatGap > 0.003) {
-        dummy.position.y -= maxFloatGap + 0.03;
+      let finalGap = evaluateFloatGap(bounds.floatCheckPoints);
+      let finalSupportGap = evaluateFloatGap(bounds.supportPoints);
+      const forceMaxGap = Math.max(finalGap.maxGap, finalSupportGap.maxGap);
+      if (forceMaxGap > 0) {
+        const forceEmbed = forceMaxGap + settleMargin + THREE.MathUtils.clamp(bounds.robustMinY * scale * 0.15, 0, 0.07);
+        dummy.position.y -= forceEmbed;
         dummy.updateMatrix();
+        finalGap = evaluateFloatGap(bounds.floatCheckPoints);
+        finalSupportGap = evaluateFloatGap(bounds.supportPoints);
+      }
+
+      if (
+        finalGap.invalid
+        || finalSupportGap.invalid
+        || finalGap.maxGap > 0.001
+        || finalSupportGap.maxGap > 0.001
+        || finalGap.avgPositiveGap > 0.0006
+      ) {
+        continue;
       }
 
       matrices.push(dummy.matrix.clone());
@@ -751,16 +933,23 @@ const SceneryInstanced = React.memo(() => {
 
   const boulderMatrices = useMemo(
     () => buildMatrices(BOULDER_COUNT, 5200, 4.2, 9.4, 0.2, 0.045, 0.72, 44, 0.34, 0, boulderBounds),
-    [boulderBounds],
+    [boulderBounds, protectedPoints],
   );
   const cliffRockMatrices = useMemo(
     () => buildMatrices(CLIFF_ROCK_COUNT, 9200, 6.4, 13.8, 0.16, 0.05, 0.78, 52, 0.3, 0, cliffRockBounds),
-    [cliffRockBounds],
+    [cliffRockBounds, protectedPoints],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const hydrate = (mesh: THREE.InstancedMesh | null, matrices: THREE.Matrix4[]) => {
-      if (!mesh || matrices.length === 0) return;
+      if (!mesh) return;
+
+      mesh.count = 0;
+      if (matrices.length === 0) {
+        mesh.instanceMatrix.needsUpdate = true;
+        return;
+      }
+
       matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
       mesh.count = matrices.length;
       mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -780,12 +969,18 @@ const SceneryInstanced = React.memo(() => {
         <instancedMesh
           ref={boulderMeshRef}
           args={[boulderMeshData.geo, boulderMeshData.mat, BOULDER_COUNT]}
+          onUpdate={(mesh) => {
+            mesh.count = 0;
+          }}
         />
       )}
       {cliffRockMeshData && (
         <instancedMesh
           ref={cliffRockMeshRef}
           args={[cliffRockMeshData.geo, cliffRockMeshData.mat, CLIFF_ROCK_COUNT]}
+          onUpdate={(mesh) => {
+            mesh.count = 0;
+          }}
         />
       )}
     </group>
@@ -793,12 +988,13 @@ const SceneryInstanced = React.memo(() => {
 });
 
 // ── Rover
-const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speedRef, wearLevel }: {
+const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speedRef, stepOverride, wearLevel }: {
   pathPoints: THREE.Vector3[];
   stepRef: React.MutableRefObject<number>;
   isMiningRef: React.MutableRefObject<boolean>;
   roverPosRef: React.MutableRefObject<THREE.Vector3>;
   speedRef: React.MutableRefObject<number>;
+  stepOverride?: number | null;
   wearLevel: number;
 }) => {
   const { scene } = useGLTF('/models/Rover.glb');
@@ -819,8 +1015,21 @@ const Rover = React.memo(({ pathPoints, stepRef, isMiningRef, roverPosRef, speed
     const start = pathPoints[0];
     const y = estimateTerrainHeight(start.x, start.z) + groundOffset + ROVER_GROUND_CLEARANCE;
     roverRef.current.position.set(start.x, y, start.z);
+    roverPosRef.current.set(start.x, y, start.z);
     velocityRef.current.set(0, 0, 0);
-  }, [pathPoints, groundOffset]);
+    currentMoveSpeedRef.current = 0;
+  }, [pathPoints, groundOffset, roverPosRef]);
+
+  useEffect(() => {
+    if (stepOverride === null || stepOverride === undefined || !roverRef.current || pathPoints.length === 0) return;
+    const clampedIndex = Math.max(0, Math.min(Math.floor(stepOverride), pathPoints.length - 1));
+    const point = pathPoints[clampedIndex];
+    const y = estimateTerrainHeight(point.x, point.z) + groundOffset + ROVER_GROUND_CLEARANCE;
+    roverRef.current.position.set(point.x, y, point.z);
+    roverPosRef.current.set(point.x, y, point.z);
+    velocityRef.current.set(0, 0, 0);
+    currentMoveSpeedRef.current = 0;
+  }, [stepOverride, pathPoints, groundOffset, roverPosRef]);
 
   useEffect(() => {
     if (!roverRef.current) return;
@@ -1421,6 +1630,7 @@ const SimulationController = ({
     timerRef.current += delta;
 
     let processed = 0;
+    let lastProcessedStep: number | null = null;
     while (timerRef.current >= effectiveDuration && processed < 200 && !completedRef.current) {
       timerRef.current -= effectiveDuration;
       processed++;
@@ -1450,8 +1660,11 @@ const SimulationController = ({
 
       const log = simulationResult.logs[step] ?? null;
       isMiningRef.current = log ? log.action === 'mine' : false;
+      lastProcessedStep = step;
+    }
 
-      onStepBatch(step);
+    if (lastProcessedStep !== null) {
+      onStepBatch(lastProcessedStep);
     }
   });
 
@@ -1463,6 +1676,7 @@ const Scene: React.FC<SceneProps> = ({
   map,
   simulationResult,
   isPlaying,
+  startOverride = null,
   stepDurationSec = 0.06,
   onStep,
   onComplete,
@@ -1478,7 +1692,7 @@ const Scene: React.FC<SceneProps> = ({
   const isMiningRef = useRef(false);
   const isPlayingRef = useRef(false);
 
-  const mapStartCell: [number, number] = map.start;
+  const mapStartCell: [number, number] = useMemo(() => startOverride ?? map.start, [startOverride, map.start]);
 
   const mapStartWorld: [number, number, number] = useMemo(() => {
     return [mapStartCell[1] * CELL_SIZE - OFFSET, 0, mapStartCell[0] * CELL_SIZE - OFFSET];
@@ -1666,6 +1880,20 @@ const Scene: React.FC<SceneProps> = ({
     return [wx, estimateTerrainHeight(wx, wz), wz];
   }, [isMiningNow, currentLog]);
 
+  const protectedSceneryPoints = useMemo<[number, number][]>(() => {
+    const pts: [number, number][] = [
+      [mapStartWorld[0], mapStartWorld[2]],
+      [startPos[0], startPos[2]],
+    ];
+
+    const unique = new Map<string, [number, number]>();
+    pts.forEach(([x, z]) => {
+      unique.set(`${Math.round(x * 10)}_${Math.round(z * 10)}`, [x, z]);
+    });
+
+    return Array.from(unique.values());
+  }, [mapStartWorld, startPos]);
+
   return (
     <div className="w-full h-screen absolute inset-0 z-0">
       <Canvas
@@ -1714,7 +1942,7 @@ const Scene: React.FC<SceneProps> = ({
           <MarsSurface />
           <EnergyHeatmapOverlay map={map} start={simulationResult?.start ?? mapStartCell} visible={showEnergyHeatmap} />
           <BaseBeacon position={mapStartWorld} />
-          <SceneryInstanced />
+          <SceneryInstanced protectedPoints={protectedSceneryPoints} />
 
           {pathPoints.length > 0 && <PathLine pathPoints={pathPoints} currentStep={collectedStep} />}
 
@@ -1735,6 +1963,7 @@ const Scene: React.FC<SceneProps> = ({
             isMiningRef={isMiningRef}
             roverPosRef={roverPosRef}
             speedRef={speedRef}
+            stepOverride={stepOverride}
             wearLevel={wearLevel}
           />
 
@@ -1859,4 +2088,23 @@ const Scene: React.FC<SceneProps> = ({
   );
 };
 
-export default Scene;
+const areScenePropsEqual = (prev: SceneProps, next: SceneProps): boolean => {
+  return (
+    prev.map === next.map
+    && prev.simulationResult === next.simulationResult
+    && prev.isPlaying === next.isPlaying
+    && prev.startOverride === next.startOverride
+    && prev.stepDurationSec === next.stepDurationSec
+    && prev.onStep === next.onStep
+    && prev.onComplete === next.onComplete
+    && prev.stepOverride === next.stepOverride
+    && prev.showEnergyHeatmap === next.showEnergyHeatmap
+    && prev.photoMode === next.photoMode
+    && prev.hideHudOverlay === next.hideHudOverlay
+    && prev.cameraMode === next.cameraMode
+    && prev.localPaused === next.localPaused
+    && prev.setLocalPaused === next.setLocalPaused
+  );
+};
+
+export default React.memo(Scene, areScenePropsEqual);

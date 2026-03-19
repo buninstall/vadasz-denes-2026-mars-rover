@@ -1,10 +1,34 @@
 from pathlib import Path
 
 from .config import MAX_SIMULATION_STEPS, MIN_TIME_LIMIT_HOURS
-from .mission import CYCLE, DAY_STEPS, MAX_BATTERY, MarsMission
+from .mission import CYCLE, DAY_STEPS, GRID_SIZE, MAX_BATTERY, MarsMission
 from .planner import RoverPlanner
 
 Position = tuple[int, int]
+
+
+def _resolve_start_override(
+    mission: MarsMission,
+    start_override: tuple[int, int] | list[int] | None,
+) -> Position | None:
+    if start_override is None:
+        return None
+
+    if len(start_override) != 2:
+        raise ValueError("start_override must contain exactly two values: [row, col]")
+
+    row, col = start_override
+    if not isinstance(row, int) or not isinstance(col, int) or isinstance(row, bool) or isinstance(col, bool):
+        raise ValueError("start_override row/col must be integers")
+
+    if not (0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE):
+        raise ValueError(f"start_override must be within map bounds 0..{GRID_SIZE - 1}")
+
+    candidate = (row, col)
+    if candidate in mission.obstacles:
+        raise ValueError("start_override cannot be placed on obstacle '#' cell")
+
+    return candidate
 
 
 def _build_log_entry(
@@ -33,8 +57,14 @@ def run_simulation(
     map_file: str | Path,
     time_limit_hours: int = 24,
     collect_all: bool = False,
+    start_override: tuple[int, int] | list[int] | None = None,
 ) -> dict:
     mission = MarsMission(map_file)
+
+    resolved_override = _resolve_start_override(mission, start_override)
+    if resolved_override is not None:
+        mission.start_pos = resolved_override
+
     planner = RoverPlanner(mission)
 
     pos = mission.start_pos
