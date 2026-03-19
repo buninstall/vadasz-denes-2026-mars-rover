@@ -631,7 +631,7 @@ def generate_and_save_map(args):
 
 if __name__ == "__main__":
     # Create output directory
-    output_dir = "mars_maps"
+    output_dir = "konnyu_maps"
     os.makedirs(output_dir, exist_ok=True)
 
     # Number of maps to generate

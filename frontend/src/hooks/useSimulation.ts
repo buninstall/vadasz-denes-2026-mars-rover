@@ -9,7 +9,7 @@ export const useSimulation = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [replays, setReplays] = useState<ReplayEntry[]>([]);
   const [comparisonRuns, setComparisonRuns] = useState<ComparisonRun[]>([]);
-  const [mapSource, setMapSource] = useState<ActiveMapSource>('random');
+  const [mapSource, setMapSource] = useState<ActiveMapSource>('random-uncomplicated');
   const [currentSimId, setCurrentSimId] = useState<string | null>(null);
 
   const saveSimulationStep = useCallback(async (step: number) => {

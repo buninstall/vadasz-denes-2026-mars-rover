@@ -36,9 +36,9 @@ def _load_simulation_record(file_path: Path) -> dict | None:
 
 
 @app.get("/map")
-def get_map(random_map: bool = True):
+def get_map(random_map: bool = True, complexity: str = "uncomplicated"):
     try:
-        source_file = pick_map_path(random_map=random_map)
+        source_file = pick_map_path(random_map=random_map, complexity=complexity)
     except FileNotFoundError as exc:
         source_file = DEFAULT_MAP_PATH
         if not source_file.exists():

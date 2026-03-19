@@ -1,5 +1,5 @@
 export type BlockType = '.' | '#' | 'B' | 'Y' | 'G' | 'S';
-export type MapLoadSource = 'random' | 'static';
+export type MapLoadSource = 'random-uncomplicated' | 'random-complicated' | 'static';
 export type ActiveMapSource = MapLoadSource | 'custom';
 
 export interface MapData {

@@ -219,21 +219,27 @@ npm run build
 
 ## Optional: Generate More Maps
 
-The generator script creates a large batch of maps in `backend/mars_maps/`.
+The generator scripts create a large batch of maps in either `backend/konnyu_maps/` (easy) or `backend/nehez_maps/` (hard).
 
-Run it like this:
-
+To generate easy maps:
 ```bash
 cd /Users/gergo/Developer/mars-rover/backend
 source ../.venv/bin/activate
-python map.py
+python konnyu_maps/konnyu_map.py
+```
+
+To generate hard maps:
+```bash
+cd /Users/gergo/Developer/mars-rover/backend
+source ../.venv/bin/activate
+python nehez_maps/nehez_map.py
 ```
 
 Note:
 
-- by default `backend/map.py` generates `10000` maps
-- that can take a while
-- if you want a smaller run, edit `num_maps` near the bottom of `backend/map.py` before running it
+- by default, both scripts generate `10000` maps.
+- that can take a while.
+- if you want a smaller run, edit `num_maps` near the bottom of the Python scripts before running them.
 
 ## Typical Dev Workflow
 

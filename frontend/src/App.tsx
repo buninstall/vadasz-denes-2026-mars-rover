@@ -86,6 +86,7 @@ export default function App() {
   const [savedSession, setSavedSession] = useState<any>(null);
   const [showSavedSimulations, setShowSavedSimulations] = useState(false);
   const [pendingJumpStep, setPendingJumpStep] = useState<number | null>(null);
+  const [showRandomOptions, setShowRandomOptions] = useState(false);
 
   // Mark loaded if we are already in simulation
   useEffect(() => {
@@ -328,6 +329,78 @@ export default function App() {
     const statusText = loading ? 'FETCHING TERRAIN PACKAGE' : 'SELECT STARTUP MAP SOURCE';
     const stateText = loading ? 'SYNCING BACKEND' : 'AWAITING COMMAND';
 
+    if (showRandomOptions) {
+      return (
+        <div className="boot-screen boot-screen--standalone">
+          <div className="boot-grid" style={{ width: 'min(1200px, 95vw)', padding: '40px' }}>
+            <div className="boot-panel" style={{ width: '100%', maxWidth: 'none' }}>
+              <div 
+                className="boot-actions" 
+                style={{ 
+                  display: 'flex', 
+                  flexDirection: 'row', 
+                  gap: '20px', 
+                  gridTemplateColumns: 'none',
+                  margin: 0,
+                  width: '100%'
+                }}
+              >
+                <button
+                  className="command-button command-button--primary boot-choice-btn"
+                  style={{ 
+                    flex: 2,
+                    padding: '48px 24px', 
+                    fontSize: '1.5rem', 
+                    letterSpacing: '0.15em',
+                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(5, 150, 105, 0.15) 100%)',
+                    borderColor: '#10b981',
+                    borderRadius: '16px',
+                    fontWeight: 600
+                  }}
+                  onClick={() => handleInitialMapSelection('random-uncomplicated')}
+                  disabled={loading}
+                >
+                  UNCOMPLICATED
+                </button>
+
+                <button
+                  className="command-button command-button--primary boot-choice-btn"
+                  style={{ 
+                    flex: 2,
+                    padding: '48px 24px', 
+                    fontSize: '1.5rem', 
+                    letterSpacing: '0.15em',
+                    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.25) 0%, rgba(185, 28, 28, 0.15) 100%)',
+                    borderColor: '#ef4444',
+                    borderRadius: '16px',
+                    fontWeight: 600
+                  }}
+                  onClick={() => handleInitialMapSelection('random-complicated')}
+                  disabled={loading}
+                >
+                  COMPLICATED
+                </button>
+
+                <button
+                  className="command-button command-button--secondary boot-choice-btn"
+                  style={{ 
+                    flex: 1,
+                    padding: '48px 24px',
+                    fontSize: '1.2rem',
+                    borderRadius: '16px'
+                  }}
+                  onClick={() => setShowRandomOptions(false)}
+                  disabled={loading}
+                >
+                  BACK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="boot-screen boot-screen--standalone">
         <div className="boot-grid">
@@ -338,7 +411,7 @@ export default function App() {
             <div className="boot-actions">
               <button
                 className="command-button command-button--primary boot-choice-btn"
-                onClick={() => handleInitialMapSelection('random')}
+                onClick={() => setShowRandomOptions(true)}
                 disabled={loading}
               >
                 Random map
@@ -398,8 +471,8 @@ export default function App() {
 
   const mapWidth = map.grid[0]?.length ?? 0;
   const mapHeight = map.grid.length;
-  const mapSourceLabel = mapSource === 'random'
-    ? 'Random backend'
+  const mapSourceLabel = mapSource.startsWith('random')
+    ? `Random backend (${mapSource === 'random-complicated' ? 'Complicated' : 'Uncomplicated'})`
     : mapSource === 'static'
       ? 'Static backend'
       : 'Custom upload';

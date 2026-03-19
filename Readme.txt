@@ -60,3 +60,9 @@ Frontend:
 4. Megjegyzés
 -------------
 A csapat adataihoz jelenleg helyőrzők szerepelnek a dokumentumban, mert ezek az információk nem szerepeltek a projekt fájljaiban.
+Hogyha véletlenül kevés lenne a teszt pályák, vagy még nehezebb pályákat szeretnénk generálni, akkor csak simán futtatni kell egy python scriptet
+cd /mars-rover/backend
+source ../.venv/bin/activate
+python konnyu_maps/konnyu_map.py
+VAGY
+python nehez_maps/nehez_map.py

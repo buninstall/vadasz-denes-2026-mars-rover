@@ -7,6 +7,8 @@ from .config import (
     DEFAULT_MAP_NAME,
     DEFAULT_MAP_PATH,
     MAPS_DIR,
+    KONNYU_MAPS_DIR,
+    NEHEZ_MAPS_DIR,
     RUNTIME_MAPS_DIR,
     UPLOADS_DIR,
 )
@@ -46,20 +48,22 @@ def load_map_from_csv(file_path: str | Path) -> list[list[str]] | None:
     return parse_csv_grid(content)
 
 
-def list_generated_maps() -> list[Path]:
-    if not MAPS_DIR.is_dir():
+def list_generated_maps(complexity: str = "uncomplicated") -> list[Path]:
+    target_dir = NEHEZ_MAPS_DIR if complexity == "complicated" else KONNYU_MAPS_DIR
+    if not target_dir.is_dir():
         return []
 
-    return sorted(path for path in MAPS_DIR.iterdir() if path.suffix == ".csv")
+    return sorted(path for path in target_dir.iterdir() if path.suffix == ".csv")
 
 
-def pick_map_path(random_map: bool = True) -> Path:
+def pick_map_path(random_map: bool = True, complexity: str = "uncomplicated") -> Path:
     if not random_map:
         return DEFAULT_MAP_PATH
 
-    available_maps = list_generated_maps()
+    available_maps = list_generated_maps(complexity)
     if not available_maps:
-        raise FileNotFoundError(f"No CSV files found in {MAPS_DIR}")
+        target_dir = NEHEZ_MAPS_DIR if complexity == "complicated" else KONNYU_MAPS_DIR
+        raise FileNotFoundError(f"No CSV files found in {target_dir}")
 
     return random.choice(available_maps)
 
@@ -142,6 +146,8 @@ def resolve_map_path(map_name: str | Path) -> Path:
     candidates.append(RUNTIME_MAPS_DIR / requested.name)
     candidates.append(UPLOADS_DIR / requested.name)
     candidates.append(MAPS_DIR / requested.name)
+    candidates.append(KONNYU_MAPS_DIR / requested.name)
+    candidates.append(NEHEZ_MAPS_DIR / requested.name)
 
     if requested.name == DEFAULT_MAP_NAME:
         candidates.append(DEFAULT_MAP_PATH)

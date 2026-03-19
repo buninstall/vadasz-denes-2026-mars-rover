@@ -51,9 +51,11 @@ const extractStart = (grid: string[][], providedStart?: number[]): [number, numb
 };
 
 export const simulationApi = {
-  getMap: async (mapSource: MapLoadSource = 'random'): Promise<MapData> => {
+  getMap: async (mapSource: MapLoadSource = 'random-uncomplicated'): Promise<MapData> => {
+    const isRandom = mapSource.startsWith('random');
+    const complexity = mapSource === 'random-complicated' ? 'complicated' : 'uncomplicated';
     const response = await api.get('/map', {
-      params: { random_map: mapSource === 'random' },
+      params: { random_map: isRandom, complexity },
     });
     const grid = response.data.data || [];
 
