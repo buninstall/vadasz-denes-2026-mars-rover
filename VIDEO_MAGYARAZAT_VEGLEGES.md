@@ -18,6 +18,3 @@ Ha egy lépés energetikailag nem biztonságos, a rover tud várakozni (standby)
 - **Kérdés a zsűrihez:** Elfogadott-e az az értelmezés, hogy nappal egy akció akkor is végrehajtható, ha a lépés elején az akkumulátor önmagában nem fedezné a fogyasztást, de a félórás nappali töltéssel együtt a nettó energia nem lesz negatív?
 - **Megjegyzés:** Van ismert edge case, amikor az aktuális célpont megtartása miatt idő végére nem ér vissza a rover, noha az energia modell helyes.
 - **Megjegyzés:** A `passable_cells` paraméter jelenleg cache-kulcsban szerepel, de az A* útkeresés tényleges bejárását nem befolyásolja.
-
-## 5. Összegzés
-A végeredmény egy olyan intelligens vezérlés, amely dinamikusan alkalmazkodik az energiahelyzethez és az akadályokhoz, és a rendelkezésre álló időben igyekszik maximalizálni a begyűjtött ásványok számát, majd visszatérni a kiinduló pontra.

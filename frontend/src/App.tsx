@@ -147,7 +147,6 @@ export default function App() {
   }, [map]);
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const lastMiningSoundStepRef = useRef(-1);
 
   const ensureAudioContext = useCallback((): AudioContext | null => {
     if (typeof window === 'undefined') return null;
@@ -160,28 +159,6 @@ export default function App() {
     }
     return audioContextRef.current;
   }, []);
-
-  const playMiningBeep = useCallback(() => {
-    const ctx = ensureAudioContext();
-    if (!ctx) return;
-
-    ctx.resume().catch(() => undefined);
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    oscillator.type = 'sawtooth';
-    oscillator.frequency.setValueAtTime(920, ctx.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(560, ctx.currentTime + 0.11);
-
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.035, ctx.currentTime + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.14);
-
-    oscillator.connect(gain);
-    gain.connect(ctx.destination);
-    oscillator.start();
-    oscillator.stop(ctx.currentTime + 0.16);
-  }, [ensureAudioContext]);
 
   const currentLog: SimLogEntry | null = useMemo(() => {
     if (!simulationResult?.logs?.length) return null;
@@ -223,13 +200,6 @@ export default function App() {
       setReportDismissed(false);
     }
   }, [simulationResult, pendingJumpStep]);
-
-  useEffect(() => {
-    if (!currentLog || currentLog.step === lastMiningSoundStepRef.current) return;
-    if (currentLog.action !== 'mine') return;
-    lastMiningSoundStepRef.current = currentLog.step;
-    playMiningBeep();
-  }, [currentLog, playMiningBeep]);
 
   useEffect(() => {
     return () => {
