@@ -2,7 +2,7 @@
 name = "mars-rover"
 version = "0.1.0"
 description = "Add your description here"
-readme = "README.md"
+readme = "Readme.txt"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.129.0",
