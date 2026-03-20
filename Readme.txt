@@ -12,17 +12,25 @@ Email: zsombi.futo@gmail.com
 2. Fejlesztői környezet
 -----------------------
 A projekt két fő részből áll: egy Python alapú backendből és egy React/Vite alapú frontendből.
+A könnyebb futtatás érdekében a projekt tartalmaz egy `Justfile`-t is.
 
-Backend:
+Telepítendő eszközök:
 - Python 3.12
+- Node.js 18 vagy újabb
+- npm
+- `just` (parancssoros futtató eszköz)
+  - Telepítés (macOS): `brew install just`
+  - Telepítés (Windows): `scoop install just` vagy `choco install just`
+  - Telepítés (Linux): `sudo apt install just`
+
+Technológiák:
+Backend:
 - FastAPI 0.129.0
 - Uvicorn 0.35.0
 - NumPy 2.4.2
 - websockets 16.0
 
 Frontend:
-- Node.js 18 vagy újabb
-- npm
 - Vite 7.3.1
 - React 19.2.4
 - TypeScript 5.6.4
@@ -30,6 +38,15 @@ Frontend:
 
 3. Rövid használati útmutató
 ----------------------------
+
+### A project indítása a legegyszerűbb módon (Just):
+Ha telepítve van a `just` az eszközödre, akkor a gyökérkönyvtárból indíthatod el egyszerre a backendet és a frontendet:
+```bash
+just dev
+```
+(Ehhez először a `.venv` környezetet és az `npm` csomagokat telepíteni kell, lásd lejjebb.)
+
+### Manuális indítás:
 1. Indítsátok el a backendet:
 
    python3 -m venv .venv
