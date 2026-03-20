@@ -47,7 +47,7 @@ Frontend:
 
 3. Használat:
 
-- A felület a böngészőben a `http://localhost:5173` címen érhető el.
+- A felület a böngészőben a `http://localhost:5173` címen érhető el. (build után(npm run build && npm run start) 'http://localhost:4173/')
 - A backend API a `http://127.0.0.1:8000`, a Swagger felület pedig a `http://127.0.0.1:8000/docs` címen nyitható meg.
 - Indulás után választható véletlen pálya, fix pálya vagy saját CSV fájl feltöltése.
 - Saját pálya esetén a fájlnak 50x50-es CSV-nek kell lennie, és pontosan egy darab `S` kezdőpontot kell tartalmaznia.
@@ -57,7 +57,7 @@ Frontend:
 - A program megjeleníti a rover útját, az akkumulátor töltöttségét, a nappali és éjszakai ciklusokat, valamint a begyűjtött ásványokat.
 - A lefutott szimulációk elmentődnek, később visszatölthetők és törölhetők.
 
-4. Teszt szimuláció és diagramok generálása
+4. Teszt szimuláció és diagramok generálása (opcionális)
 -----------------------------------------
 A projekthez készült egy speciális script, ami lefuttat egy teljes küldetést és automatikusan elmenti a dokumentációhoz szükséges diagramokat (folyamatábra, hőtérkép, energia-sebesség grafikon, akkumulátor idősor).
 
@@ -65,7 +65,7 @@ Futtatás:
 ```bash
 cd backend
 source ../.venv/bin/activate
-python generate_simulation_diagrams.py --map mars_map_50x50.csv --hours 300 --collect-all
+python generate_simulation_diagrams.py --map mars_map_50x50.csv --hours 150 --collect-all
 ```
 
 Az eredmények a `backend/simulations/diagram_reports/<időbélyeg>/` mappába kerülnek.
@@ -73,7 +73,8 @@ Az eredmények a `backend/simulations/diagram_reports/<időbélyeg>/` mappába k
 5. Megjegyzés
 -------------
 A csapat adataihoz jelenleg helyőrzők szerepelnek a dokumentumban, mert ezek az információk nem szerepeltek a projekt fájljaiban.
-Hogyha véletlenül kevés lenne a teszt pályák, vagy még nehezebb pályákat szeretnénk generálni, akkor csak simán futtatni kell egy python scriptet
+
+Hogyha véletlenül kevés lenne a teszt pálya, vagy még nehezebb pályákat szeretnénk generálni, akkor csak simán futtatni kell egy python scriptet.
 cd /mars-rover/backend
 source ../.venv/bin/activate
 python konnyu_maps/konnyu_map.py

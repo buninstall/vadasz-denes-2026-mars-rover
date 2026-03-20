@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "vite start --host",
     "dev": "vite",
     "build": "vite build",
+    "start": "vite preview --host",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
