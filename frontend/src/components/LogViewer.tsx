@@ -26,6 +26,7 @@ interface TimelineEntry {
 const getActionLabel = (entry: TimelineEntry) => {
   const { log, previous, isAlert } = entry;
   if (log.action === 'mine') return 'Sample';
+  if (log.action === 'standby') return 'Standby';
   if (log.action === 'start') return 'Boot';
   if (previous && previous.is_day !== log.is_day) return log.is_day ? 'Sunrise' : 'Nightfall';
   if (isAlert) return 'Alert';
@@ -36,6 +37,11 @@ const getActionCopy = (entry: TimelineEntry) => {
   const { log, previous, isAlert, isTransition } = entry;
   if (log.action === 'mine') {
     return `Sampling: ${log.minerals_collected.join(', ')} • speed ${log.speed.toFixed(1)}x`;
+  }
+  if (log.action === 'standby') {
+    const batteryDelta = previous ? log.battery - previous.battery : 0;
+    const batteryTrend = batteryDelta > 0.01 ? `+${batteryDelta.toFixed(1)}%` : `${batteryDelta.toFixed(1)}%`;
+    return `Holding position • energy ${batteryTrend} • speed ${log.speed.toFixed(1)}x`;
   }
   if (log.action === 'start') {
     return 'Mission started, route and telemetry active.';
@@ -55,7 +61,7 @@ const getActionCopy = (entry: TimelineEntry) => {
 };
 
 const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep, onJumpToStep }) => {
-  const [filter, setFilter] = useState<LogFilter>('events');
+  const [filter, setFilter] = useState<LogFilter>('all');
   const [isCollapsed, setIsCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -71,13 +77,18 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep, on
       const isTransition = !!previous && previous.is_day !== log.is_day;
       const isAlert = log.battery <= 26;
 
-      const isEvent = log.action === 'start' || log.action === 'mine' || isTransition || isAlert;
+      const isEvent =
+        log.action === 'start'
+        || log.action === 'mine'
+        || log.action === 'standby'
+        || isTransition
+        || isAlert;
       const shouldKeep =
         filter === 'samples'
           ? log.action === 'mine'
           : filter === 'events'
             ? isEvent
-            : isEvent || log.step % 3 === 0;
+            : true;
 
       if (shouldKeep) {
         filtered.push({ log, previous, isAlert, isTransition });

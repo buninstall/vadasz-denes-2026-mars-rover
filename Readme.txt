@@ -57,7 +57,20 @@ Frontend:
 - A program megjeleníti a rover útját, az akkumulátor töltöttségét, a nappali és éjszakai ciklusokat, valamint a begyűjtött ásványokat.
 - A lefutott szimulációk elmentődnek, később visszatölthetők és törölhetők.
 
-4. Megjegyzés
+4. Teszt szimuláció és diagramok generálása
+-----------------------------------------
+A projekthez készült egy speciális script, ami lefuttat egy teljes küldetést és automatikusan elmenti a dokumentációhoz szükséges diagramokat (folyamatábra, hőtérkép, energia-sebesség grafikon, akkumulátor idősor).
+
+Futtatás:
+```bash
+cd backend
+source ../.venv/bin/activate
+python generate_simulation_diagrams.py --map mars_map_50x50.csv --hours 300 --collect-all
+```
+
+Az eredmények a `backend/simulations/diagram_reports/<időbélyeg>/` mappába kerülnek.
+
+5. Megjegyzés
 -------------
 A csapat adataihoz jelenleg helyőrzők szerepelnek a dokumentumban, mert ezek az információk nem szerepeltek a projekt fájljaiban.
 Hogyha véletlenül kevés lenne a teszt pályák, vagy még nehezebb pályákat szeretnénk generálni, akkor csak simán futtatni kell egy python scriptet

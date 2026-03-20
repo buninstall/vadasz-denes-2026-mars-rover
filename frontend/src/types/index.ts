@@ -46,7 +46,7 @@ export interface SimLogEntry {
   speed: number;
   distance_traveled: number;
   minerals_collected: string[];
-  action: 'start' | 'move' | 'mine';
+  action: 'start' | 'move' | 'mine' | 'standby';
 }
 
 export interface SimMineral {
