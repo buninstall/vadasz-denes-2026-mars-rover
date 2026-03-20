@@ -95,7 +95,7 @@ const LogViewer: React.FC<LogViewerProps> = ({ simulationResult, currentStep, on
       }
     }
 
-    return filtered.slice(-48);
+    return filtered;
   }, [simulationResult, currentStep, filter]);
 
   useEffect(() => {

@@ -41,7 +41,7 @@ Frontend:
 
 2. Indítsátok el a frontendet egy másik terminálban:
 
-   cd /Users/gergo/Developer/mars-rover/frontend
+   cd frontend
    npm install
    npm run dev
 

@@ -220,6 +220,47 @@ class RoverPlanner:
         target_row, target_column = self._coords_by_index[target_index]
         return max(abs(start_row - target_row), abs(start_column - target_column))
 
+    def _is_blocked_index(
+        self,
+        index: int,
+        passable_obstacle_indices: set[int],
+    ) -> bool:
+        return index in self._obstacle_indices and index not in passable_obstacle_indices
+
+    def _iter_path_neighbors(
+        self,
+        current_index: int,
+        passable_obstacle_indices: set[int],
+    ) -> tuple[int, ...]:
+        if not passable_obstacle_indices:
+            return self._path_neighbors_by_index[current_index]
+
+        row, column = self._coords_by_index[current_index]
+        neighbors: list[int] = []
+
+        for delta_row, delta_column in ADJACENT_OFFSETS:
+            next_row = row + delta_row
+            next_column = column + delta_column
+            if not (0 <= next_row < GRID_SIZE and 0 <= next_column < GRID_SIZE):
+                continue
+
+            next_index = next_row * GRID_SIZE + next_column
+            if self._is_blocked_index(next_index, passable_obstacle_indices):
+                continue
+
+            if abs(delta_row) == 1 and abs(delta_column) == 1:
+                orthogonal_a = (row + delta_row) * GRID_SIZE + column
+                orthogonal_b = row * GRID_SIZE + (column + delta_column)
+                if (
+                    self._is_blocked_index(orthogonal_a, passable_obstacle_indices)
+                    or self._is_blocked_index(orthogonal_b, passable_obstacle_indices)
+                ):
+                    continue
+
+            neighbors.append(next_index)
+
+        return tuple(neighbors)
+
     def _compute_path(
         self,
         start: Position,
@@ -228,6 +269,14 @@ class RoverPlanner:
     ) -> list[Position]:
         start_index = self._position_to_index(start)
         target_index = self._position_to_index(target)
+        passable_obstacle_indices = {
+            index for index in passable_cells if index in self._obstacle_indices
+        }
+
+        if self._is_blocked_index(start_index, passable_obstacle_indices):
+            return []
+        if self._is_blocked_index(target_index, passable_obstacle_indices):
+            return []
 
         self._search_generation += 1
         generation = self._search_generation
@@ -251,7 +300,7 @@ class RoverPlanner:
             if current_index == target_index:
                 break
 
-            for next_index in self._path_neighbors_by_index[current_index]:
+            for next_index in self._iter_path_neighbors(current_index, passable_obstacle_indices):
                 new_cost = current_cost + 1
                 if (
                     self._seen_generation[next_index] != generation
@@ -635,6 +684,16 @@ class RoverPlanner:
             "target_path": outbound_path,
             "home_path": return_path,
         }
+
+    def evaluate_target(
+        self,
+        pos: Position,
+        target: Position,
+        battery: float,
+        step: int,
+        max_steps: int,
+    ) -> PathEvaluation | None:
+        return self._evaluate_candidate(pos, target, battery, step, max_steps)
 
     def choose_next_target(
         self,

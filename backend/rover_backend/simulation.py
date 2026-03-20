@@ -127,6 +127,9 @@ def run_simulation(
         if not planner.can_mine(battery, step):
             return False
 
+        if planner.evaluate_target(pos, pos, battery, step, max_steps) is None:
+            return False
+
         battery = planner._mine_battery(battery, step)
         mineral_type = mission.minerals[pos]
         remaining_minerals.remove(pos)
@@ -178,20 +181,43 @@ def run_simulation(
                 max_steps,
             )
             candidate_target = selection[0] if selection is not None else None
+            candidate_evaluation = selection[1] if selection is not None else None
 
             if active_target is None:
                 active_target = candidate_target
             elif active_target not in remaining_minerals:
                 active_target = candidate_target
-            elif candidate_target is not None and candidate_target != active_target:
-                active_path = planner.get_path(pos, active_target, passable_cells=(pos, active_target))
-                candidate_path = planner.get_path(pos, candidate_target, passable_cells=(pos, candidate_target))
+            else:
+                active_evaluation = planner.evaluate_target(
+                    pos,
+                    active_target,
+                    battery,
+                    step,
+                    max_steps,
+                )
 
-                active_distance = len(active_path) if active_path else 10_000
-                candidate_distance = len(candidate_path) if candidate_path else 10_000
-
-                if candidate_distance + 1 < active_distance:
+                if active_evaluation is None:
                     active_target = candidate_target
+                elif candidate_target is not None and candidate_target != active_target:
+                    active_path = planner.get_path(pos, active_target, passable_cells=(pos, active_target))
+                    candidate_path = planner.get_path(pos, candidate_target, passable_cells=(pos, candidate_target))
+
+                    active_distance = len(active_path) if active_path else 10_000
+                    candidate_distance = len(candidate_path) if candidate_path else 10_000
+
+                    active_roundtrip_steps = int(active_evaluation["roundtrip_steps"])
+                    candidate_roundtrip_steps = (
+                        int(candidate_evaluation["roundtrip_steps"])
+                        if candidate_evaluation is not None
+                        else None
+                    )
+                    candidate_has_time_advantage = (
+                        candidate_roundtrip_steps is not None
+                        and candidate_roundtrip_steps + 1 < active_roundtrip_steps
+                    )
+
+                    if candidate_has_time_advantage or candidate_distance + 1 < active_distance:
+                        active_target = candidate_target
 
         if active_target is None:
             if pos != mission.start_pos:
@@ -206,6 +232,14 @@ def run_simulation(
                 break
 
         target = active_target
+        if (
+            target != mission.start_pos
+            and target in remaining_minerals
+            and planner.evaluate_target(pos, target, battery, step, max_steps) is None
+        ):
+            active_target = None
+            continue
+
         if target == pos:
             if target == mission.start_pos and not remaining_minerals:
                 termination_reason = "completed"

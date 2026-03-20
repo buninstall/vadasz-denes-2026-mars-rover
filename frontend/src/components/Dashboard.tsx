@@ -76,36 +76,47 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const timelineMarkers = useMemo(() => {
     if (!simulationResult?.logs) return { dayNightBlocks: [], markers: [], total: 0 };
-    
+
+    const logs = simulationResult.logs;
+    const total = logs.length;
+    if (total === 0) return { dayNightBlocks: [], markers: [], total: 0 };
+
     const markers = [];
-    let currentDayState = true;
-    let stateStartIdx = 0;
-    const total = simulationResult.logs.length;
     const dayNightBlocks = [];
-    
-    if (total > 0) {
-      currentDayState = simulationResult.logs[0]?.is_day ?? true;
-    }
+    let currentDayState = logs[0]?.is_day ?? true;
+    let stateStartIdx = 0;
 
     for (let i = 0; i < total; i++) {
-       const isDay = simulationResult.logs[i]?.is_day ?? true;
-       if (isDay !== currentDayState || i === total - 1) {
-          dayNightBlocks.push({
-             isDay: currentDayState,
-             startPct: (stateStartIdx / total) * 100,
-             widthPct: ((i - stateStartIdx) / total) * 100
-          });
-          currentDayState = isDay;
-          stateStartIdx = i;
-       }
-       if (simulationResult.logs[i]?.action === 'mine') {
-          markers.push({
-             type: 'mine',
-             pct: (i / total) * 100,
-             step: i
-          });
-       }
+      const entry = logs[i];
+
+      if (entry?.action === 'mine') {
+        markers.push({
+          type: 'mine',
+          pct: (i / total) * 100,
+          step: i,
+        });
+      }
+
+      if (i === 0) continue;
+
+      const isDay = entry?.is_day ?? true;
+      if (isDay !== currentDayState) {
+        dayNightBlocks.push({
+          isDay: currentDayState,
+          startPct: (stateStartIdx / total) * 100,
+          widthPct: ((i - stateStartIdx) / total) * 100,
+        });
+        currentDayState = isDay;
+        stateStartIdx = i;
+      }
     }
+
+    dayNightBlocks.push({
+      isDay: currentDayState,
+      startPct: (stateStartIdx / total) * 100,
+      widthPct: ((total - stateStartIdx) / total) * 100,
+    });
+
     return { dayNightBlocks, markers, total };
   }, [simulationResult]);
 
