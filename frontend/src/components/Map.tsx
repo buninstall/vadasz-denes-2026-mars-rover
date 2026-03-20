@@ -19,7 +19,7 @@ const Map: React.FC<MapProps> = ({ map, rover }) => {
         {map.grid.map((row, y) => 
           row.map((cell, x) => {
             const isRover = rover.x === x && rover.y === y;
-            let bgColor = 'bg-stone-600'; // Default surface
+            let bgColor = 'bg-stone-600';
 
             switch(cell) {
               case '#': bgColor = 'bg-gray-800'; break;

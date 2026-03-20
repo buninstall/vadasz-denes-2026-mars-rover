@@ -54,17 +54,15 @@ export const useSimulation = () => {
     }
   }, []);
 
-  // Load replays from backend on mount
   const fetchReplays = useCallback(async () => {
     try {
       const summaries = await simulationApi.listSimulations();
-      // Convert summaries to ReplayEntry shape (without full result/mapGrid — loaded on demand)
       const entries: ReplayEntry[] = summaries.map((s: SimulationSummary) => ({
         id: s.id,
         createdAt: s.createdAt,
         hours: s.hours,
         savedStep: s.savedStep,
-        mapGrid: [], // loaded on demand when replaying
+        mapGrid: [],
         result: {
           path: [],
           minerals: [],
@@ -103,8 +101,6 @@ export const useSimulation = () => {
       setCurrentSimId(data.sim_id || null);
       setIsPlaying(true);
       registerComparisonRun(data, `Live ${new Date().toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' })}`);
-
-      // Refresh replays from backend (simulation auto-saved by backend)
       fetchReplays();
     } catch (error) {
       console.error('Failed to start simulation', error);

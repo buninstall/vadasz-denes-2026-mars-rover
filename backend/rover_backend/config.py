@@ -9,10 +9,8 @@ NEHEZ_MAPS_DIR = BACKEND_DIR / "nehez_maps"
 UPLOADS_DIR = BACKEND_DIR / "uploads"
 SIMULATIONS_DIR = BACKEND_DIR / "simulations"
 RUNTIME_MAPS_DIR = SIMULATIONS_DIR / "runtime_maps"
-
 MAX_SIMULATION_STEPS = 10_000
 MIN_TIME_LIMIT_HOURS = 24
-
 SIMULATIONS_DIR.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)
 KONNYU_MAPS_DIR.mkdir(exist_ok=True)

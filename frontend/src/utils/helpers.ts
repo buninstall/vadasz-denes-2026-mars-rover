@@ -1,6 +1,3 @@
-/**
- * Helper to generate a dummy 50x50 map for initial visualization
- */
 export const generateDummyMap = (size = 50) => {
   const grid: string[][] = [];
   for (let y = 0; y < size; y++) {
@@ -18,10 +15,7 @@ export const generateDummyMap = (size = 50) => {
   return { grid };
 };
 
-/**
- * Format simulation time (assuming start at sunrise 06:00)
- */
-export const formatSimTime = (totalHalfHours: number) => {
+const formatSimTime = (totalHalfHours: number) => {
   const totalMinutes = (0 * 60) + (totalHalfHours * 30);
   const hours = Math.floor(totalMinutes / 60) % 24;
   const minutes = totalMinutes % 60;
