@@ -35,7 +35,7 @@ Frontend:
    python3 -m venv .venv
    source .venv/bin/activate
    python -m pip install --upgrade pip
-   python -m pip install fastapi uvicorn numpy websockets
+   python -m pip install fastapi uvicorn numpy websockets python-multipart matplotlib
    cd backend
    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -72,8 +72,6 @@ Az eredmények a `backend/simulations/diagram_reports/<időbélyeg>/` mappába k
 
 5. Megjegyzés
 -------------
-A csapat adataihoz jelenleg helyőrzők szerepelnek a dokumentumban, mert ezek az információk nem szerepeltek a projekt fájljaiban.
-
 Hogyha véletlenül kevés lenne a teszt pálya, vagy még nehezebb pályákat szeretnénk generálni, akkor csak simán futtatni kell egy python scriptet.
 cd /mars-rover/backend
 source ../.venv/bin/activate
