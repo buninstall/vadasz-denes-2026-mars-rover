@@ -1,0 +1,19 @@
+- 50x50-es pályán dolgozunk.
+- Cél: ásványgyűjtés + biztonságos hazatérés.
+- Nem csak legrövidebb utat keresünk.
+- Energia- és időkorlát alatt döntünk.
+- Backend: FastAPI.
+- Frontend: React + TypeScript + Vite.
+- 3D megjelenítés: Three.js + React Three Fiber.
+- CSV validáció: méret, karakterek, 1 startpont.
+- Útvonaltervezés: A* (8 irány, Chebyshev).
+- Sarokvágást akadályoknál tiltjuk.
+- Célpontot többtényezős score választ.
+- Sebesség adaptív: 1-3 cella/lépés.
+- Nap-éj ciklus alapú energiamodell fut.
+- Lépésenként telemetria-log készül.
+- Replay mentés, visszatöltés, step-folytatás van.
+- Erősségünk: robusztus, magyarázható döntési logika.
+- Ne mondd: "csak random pathfinding".
+- Ne mondd: "frontend csak látvány".
+- Mondd: "constraint-aware missziótervezés".
